@@ -209,6 +209,8 @@ jobs:
           cd tidesdb-java
           echo "Library path contents:"
           ls -la /usr/local/lib/libtidesdb* || true
+          # DYLD_LIBRARY_PATH is needed so libtidesdb_jni.dylib can find libtidesdb.dylib at runtime
+          export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
           mvn clean compile -DskipTests
           mvn test -DargLine="-Djava.library.path=/usr/local/lib"
 
