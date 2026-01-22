@@ -16,7 +16,7 @@ TidesDB is a fast and efficient key-value storage engine library written in C. T
 - Savepoints for partial transaction rollback
 - Six built-in comparators plus custom registration
 
-For Java usage you can go to the TidesDB Java Reference at [TidesDB Java Reference](https://tidesdb.com/reference/java/).
+For Java usage you can go to the TidesDB Java Reference [here](https://tidesdb.com/reference/java/).
 
 ## License
 

@@ -664,7 +664,8 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDBIterator_nativeNext(JNIEnv *env, 
     tidesdb_iter_t *iter = (tidesdb_iter_t *)(uintptr_t)handle;
     int result = tidesdb_iter_next(iter);
 
-    if (result != TDB_SUCCESS)
+    /* TDB_ERR_NOT_FOUND is expected when reaching end of iteration -- iterator becomes invalid */
+    if (result != TDB_SUCCESS && result != TDB_ERR_NOT_FOUND)
     {
         throwTidesDBException(env, result, getErrorMessage(result));
     }
@@ -676,7 +677,8 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDBIterator_nativePrev(JNIEnv *env, 
     tidesdb_iter_t *iter = (tidesdb_iter_t *)(uintptr_t)handle;
     int result = tidesdb_iter_prev(iter);
 
-    if (result != TDB_SUCCESS)
+    /* TDB_ERR_NOT_FOUND is expected when reaching start of iteration -- iterator becomes invalid */
+    if (result != TDB_SUCCESS && result != TDB_ERR_NOT_FOUND)
     {
         throwTidesDBException(env, result, getErrorMessage(result));
     }
