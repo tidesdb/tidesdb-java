@@ -48,12 +48,15 @@ public class NativeLibrary {
                 return;
             }
             
+            UnsatisfiedLinkError lastError = null;
+            
             try {
                 // First, try to load from java.library.path
                 System.loadLibrary(LIBRARY_NAME);
                 loaded = true;
                 return;
             } catch (UnsatisfiedLinkError e) {
+                lastError = e;
                 // Fall through to try loading from resources
             }
             
@@ -65,18 +68,14 @@ public class NativeLibrary {
                 // Fall through
             }
             
-            try {
-                System.loadLibrary("tidesdb");
-                loaded = true;
-                return;
-            } catch (UnsatisfiedLinkError e) {
-                throw new UnsatisfiedLinkError(
-                    "Failed to load TidesDB native library. " +
-                    "Make sure libtidesdb_jni is in java.library.path or " +
-                    "libtidesdb is installed on the system. " +
-                    "Error: " + e.getMessage()
-                );
-            }
+            // Throw error with details about what we tried
+            String libraryPath = System.getProperty("java.library.path");
+            throw new UnsatisfiedLinkError(
+                "Failed to load TidesDB native library. " +
+                "Make sure libtidesdb_jni is in java.library.path. " +
+                "java.library.path: [" + libraryPath + "]. " +
+                "Error: " + (lastError != null ? lastError.getMessage() : "unknown")
+            );
         }
     }
     

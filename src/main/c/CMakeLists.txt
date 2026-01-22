@@ -7,8 +7,8 @@ set(CMAKE_C_STANDARD 11)
 find_package(JNI REQUIRED)
 
 # Find TidesDB
-find_library(TIDESDB_LIBRARY tidesdb HINTS /usr/local/lib /opt/tidesdb/lib)
-find_path(TIDESDB_INCLUDE_DIR tidesdb/db.h HINTS /usr/local/include /opt/tidesdb/include)
+find_library(TIDESDB_LIBRARY tidesdb HINTS /usr/local/lib /opt/tidesdb/lib ${CMAKE_PREFIX_PATH}/lib)
+find_path(TIDESDB_INCLUDE_DIR tidesdb/db.h HINTS /usr/local/include /opt/tidesdb/include ${CMAKE_PREFIX_PATH}/include)
 
 if(NOT TIDESDB_LIBRARY)
     message(FATAL_ERROR "TidesDB library not found")
@@ -26,10 +26,28 @@ target_include_directories(tidesdb_jni PRIVATE
     ${TIDESDB_INCLUDE_DIR}
 )
 
-target_link_libraries(tidesdb_jni
-    ${TIDESDB_LIBRARY}
-    ${JNI_LIBRARIES}
-)
+# On Windows with static tidesdb, we need to link compression libraries explicitly
+# using the same approach as tidesdb's CMakeLists.txt
+if(WIN32)
+    find_package(zstd CONFIG REQUIRED)
+    find_package(Snappy CONFIG REQUIRED)
+    find_package(lz4 CONFIG REQUIRED)
+    find_package(PThreads4W REQUIRED)
+    
+    target_link_libraries(tidesdb_jni
+        ${TIDESDB_LIBRARY}
+        $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+        Snappy::snappy
+        lz4::lz4
+        PThreads4W::PThreads4W
+        ${JNI_LIBRARIES}
+    )
+else()
+    target_link_libraries(tidesdb_jni
+        ${TIDESDB_LIBRARY}
+        ${JNI_LIBRARIES}
+    )
+endif()
 
 # Set output name based on platform
 if(APPLE)

@@ -172,6 +172,8 @@ jobs:
           cmake -S . -B build -DCMAKE_PREFIX_PATH="${HOMEBREW_PREFIX}"
           cmake --build build --config Release
           sudo cmake --install build
+          echo "Installed JNI library:"
+          ls -la /usr/local/lib/libtidesdb*
 
       - name: Build JNI library (Windows)
         if: runner.os == 'Windows'
@@ -196,6 +198,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cd tidesdb-java
+          echo "Library path contents:"
+          ls -la /usr/local/lib/libtidesdb* || true
           mvn clean compile -DskipTests
           mvn test -DargLine="-Djava.library.path=/usr/local/lib"
 
