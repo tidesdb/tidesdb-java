@@ -20,8 +20,6 @@ buildNumber.properties
 *.swp
 *.swo
 *~
-c.md
-java.md
 build/
 out/
 *.class
