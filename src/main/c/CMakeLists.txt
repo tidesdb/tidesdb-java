@@ -40,6 +40,7 @@ if(WIN32)
         Snappy::snappy
         lz4::lz4
         PThreads4W::PThreads4W
+        stdc++
         ${JNI_LIBRARIES}
     )
 else()
@@ -68,7 +69,11 @@ else()
 endif()
 
 # Install
+# On macOS, shared libraries (.dylib) are treated as LIBRARY
+# On Windows, DLLs are treated as RUNTIME
+# On Linux, shared libraries (.so) are treated as LIBRARY
 install(TARGETS tidesdb_jni
     LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION lib
+    ARCHIVE DESTINATION lib
 )
