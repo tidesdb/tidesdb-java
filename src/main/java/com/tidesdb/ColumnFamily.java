@@ -1,0 +1,83 @@
+/**
+ *
+ * Copyright (C) TidesDB
+ *
+ * Original Author: Alex Gaetano Padula
+ *
+ * Licensed under the Mozilla Public License, v. 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.mozilla.org/en-US/MPL/2.0/
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.tidesdb;
+
+/**
+ * Represents a column family in TidesDB.
+ * Column families are isolated key-value stores with independent configuration.
+ */
+public class ColumnFamily {
+    
+    static {
+        NativeLibrary.load();
+    }
+    
+    private final long nativeHandle;
+    private final String name;
+    
+    ColumnFamily(long nativeHandle, String name) {
+        this.nativeHandle = nativeHandle;
+        this.name = name;
+    }
+    
+    /**
+     * Gets the name of this column family.
+     *
+     * @return the column family name
+     */
+    public String getName() {
+        return name;
+    }
+    
+    /**
+     * Retrieves statistics about this column family.
+     *
+     * @return column family statistics
+     * @throws TidesDBException if the stats cannot be retrieved
+     */
+    public Stats getStats() throws TidesDBException {
+        return nativeGetStats(nativeHandle);
+    }
+    
+    /**
+     * Manually triggers compaction for this column family.
+     *
+     * @throws TidesDBException if compaction fails
+     */
+    public void compact() throws TidesDBException {
+        nativeCompact(nativeHandle);
+    }
+    
+    /**
+     * Manually triggers memtable flush for this column family.
+     *
+     * @throws TidesDBException if flush fails
+     */
+    public void flushMemtable() throws TidesDBException {
+        nativeFlushMemtable(nativeHandle);
+    }
+    
+    long getNativeHandle() {
+        return nativeHandle;
+    }
+    
+    private static native Stats nativeGetStats(long handle) throws TidesDBException;
+    private static native void nativeCompact(long handle) throws TidesDBException;
+    private static native void nativeFlushMemtable(long handle) throws TidesDBException;
+}
