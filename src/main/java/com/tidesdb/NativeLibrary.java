@@ -57,7 +57,28 @@ public class NativeLibrary {
                 return;
             } catch (UnsatisfiedLinkError e) {
                 lastError = e;
-                // Fall through to try loading from resources
+                // Fall through to try other methods
+            }
+            
+            // Try loading with absolute path from java.library.path directories
+            // This is needed on macOS where System.loadLibrary() may not find the library
+            try {
+                String libraryPath = System.getProperty("java.library.path");
+                if (libraryPath != null) {
+                    String[] paths = libraryPath.split(java.io.File.pathSeparator);
+                    String libFileName = System.mapLibraryName(LIBRARY_NAME);
+                    for (String path : paths) {
+                        java.io.File libFile = new java.io.File(path, libFileName);
+                        if (libFile.exists()) {
+                            System.load(libFile.getAbsolutePath());
+                            loaded = true;
+                            return;
+                        }
+                    }
+                }
+            } catch (UnsatisfiedLinkError e) {
+                lastError = e;
+                // Fall through
             }
             
             try {
