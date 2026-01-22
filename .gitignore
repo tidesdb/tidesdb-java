@@ -1,4 +1,4 @@
-# Maven
+
 target/
 pom.xml.tag
 pom.xml.releaseBackup
@@ -9,8 +9,6 @@ dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
-
-# IDE
 .idea/
 *.iml
 *.ipr
@@ -22,33 +20,25 @@ buildNumber.properties
 *.swp
 *.swo
 *~
-
-# Build
+c.md
+java.md
 build/
 out/
 *.class
 *.jar
 *.war
 *.ear
-
-# Native
 *.so
 *.dylib
 *.dll
 *.o
 *.a
-
-# CMake
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
 compile_commands.json
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Test databases
 testdb/
 *.db
