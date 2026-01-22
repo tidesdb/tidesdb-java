@@ -173,9 +173,16 @@ jobs:
           cmake --build build --config Release
           echo "Built library in build directory:"
           ls -la build/
+          echo "Installing library..."
           sudo cmake --install build --verbose
           echo "Checking /usr/local/lib:"
           ls -la /usr/local/lib/libtidesdb* || echo "Not found in /usr/local/lib"
+          # Fallback: manually copy if cmake install didn't work
+          if [ ! -f /usr/local/lib/libtidesdb_jni.dylib ]; then
+            echo "Manual copy fallback..."
+            sudo cp build/libtidesdb_jni.dylib /usr/local/lib/
+            ls -la /usr/local/lib/libtidesdb*
+          fi
 
       - name: Build JNI library (Windows)
         if: runner.os == 'Windows'
