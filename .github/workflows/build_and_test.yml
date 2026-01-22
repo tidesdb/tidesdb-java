@@ -190,14 +190,14 @@ jobs:
         run: |
           cd tidesdb-java
           mvn clean compile -DskipTests
-          mvn test -Djava.library.path=/usr/local/lib
+          mvn test -DargLine="-Djava.library.path=/usr/local/lib"
 
       - name: Build and test with Maven (macOS)
         if: runner.os == 'macOS'
         run: |
           cd tidesdb-java
           mvn clean compile -DskipTests
-          mvn test -Djava.library.path=/usr/local/lib
+          mvn test -DargLine="-Djava.library.path=/usr/local/lib"
 
       - name: Build and test with Maven (Windows)
         if: runner.os == 'Windows'
@@ -205,4 +205,4 @@ jobs:
         run: |
           cd tidesdb-java
           mvn clean compile -DskipTests
-          mvn test -Djava.library.path=C:\msys64\mingw64\lib
+          mvn test "-DargLine=-Djava.library.path=C:\msys64\mingw64\lib"

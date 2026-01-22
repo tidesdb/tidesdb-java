@@ -2,7 +2,7 @@
 
 tidesdb-java is the official Java binding for TidesDB.
 
-TidesDB is a fast and efficient key-value storage engine library written in C. The underlying data structure is based on a log-structured merge-tree (LSM-tree). This Python binding provides a safe, idiomatic Python interface to TidesDB with full support for all features.
+TidesDB is a fast and efficient key-value storage engine library written in C. The underlying data structure is based on a log-structured merge-tree (LSM-tree). This Java binding provides a safe, idiomatic Java interface to TidesDB with full support for all features.
 
 ## Features
 
@@ -35,4 +35,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Support
 
 - [Discord](https://discord.gg/tWEmjR66cy)
-- [GitHub Issues](https://github.com/tidesdb/tidesdb-python/issues)
+- [GitHub Issues](https://github.com/tidesdb/tidesdb-java/issues)
