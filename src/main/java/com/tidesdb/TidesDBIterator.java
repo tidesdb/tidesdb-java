@@ -65,8 +65,8 @@ public class TidesDBIterator implements Closeable {
      */
     public void seek(byte[] key) throws TidesDBException {
         checkNotFreed();
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
+        if (key == null || key.length == 0) {
+            throw new IllegalArgumentException("Key cannot be null or empty");
         }
         nativeSeek(nativeHandle, key);
     }
@@ -79,8 +79,8 @@ public class TidesDBIterator implements Closeable {
      */
     public void seekForPrev(byte[] key) throws TidesDBException {
         checkNotFreed();
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
+        if (key == null || key.length == 0) {
+            throw new IllegalArgumentException("Key cannot be null or empty");
         }
         nativeSeekForPrev(nativeHandle, key);
     }
