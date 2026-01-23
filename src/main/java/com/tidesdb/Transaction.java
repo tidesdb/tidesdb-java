@@ -51,8 +51,8 @@ public class Transaction implements Closeable {
         if (cf == null) {
             throw new IllegalArgumentException("Column family cannot be null");
         }
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
+        if (key == null || key.length == 0) {
+            throw new IllegalArgumentException("Key cannot be null or empty");
         }
         if (value == null) {
             throw new IllegalArgumentException("Value cannot be null");
@@ -85,8 +85,8 @@ public class Transaction implements Closeable {
         if (cf == null) {
             throw new IllegalArgumentException("Column family cannot be null");
         }
-        if (key == null) {
-            throw new IllegalArgumentException("Key cannot be null");
+        if (key == null || key.length == 0) {
+            throw new IllegalArgumentException("Key cannot be null or empty");
         }
         return nativeGet(nativeHandle, cf.getNativeHandle(), key);
     }
@@ -103,7 +103,7 @@ public class Transaction implements Closeable {
         if (cf == null) {
             throw new IllegalArgumentException("Column family cannot be null");
         }
-        if (key == null) {
+        if (key == null || key.length == 0) {
             throw new IllegalArgumentException("Key cannot be null");
         }
         nativeDelete(nativeHandle, cf.getNativeHandle(), key);

@@ -443,4 +443,47 @@ public class TidesDBTest {
             assertEquals("custom_cf", cf.getName());
         }
     }
+
+    @Test
+    @Order(13)
+    void testTransactionPutGetDeleteBadKey() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb3").toString())
+                .numFlushThreads(2)
+                .numCompactionThreads(2)
+                .logLevel(LogLevel.INFO)
+                .blockCacheSize(64 * 1024 * 1024)
+                .maxOpenSSTables(256)
+                .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+
+            byte[] key = new byte[0]; // Bad key (empty)
+            byte[] value = "value".getBytes(StandardCharsets.UTF_8);
+
+            assertThrows(IllegalArgumentException.class, () -> {
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, key, value);
+                }
+            });
+
+            assertThrows(IllegalArgumentException.class, () -> {
+                try (Transaction txn = db.beginTransaction()) {
+                    byte[] result = txn.get(cf, key);
+                    assertNotNull(result);
+                    assertArrayEquals(value, result);
+                }
+            });
+
+            assertThrows(IllegalArgumentException.class, () -> {
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.delete(cf, key);
+                    txn.commit();
+                }
+            });
+        }
+    }
 }
