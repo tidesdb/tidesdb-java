@@ -200,8 +200,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cd tidesdb-java
-          mvn clean compile -DskipTests
-          mvn test -DargLine="-Djava.library.path=/usr/local/lib"
+          ./mvnw clean compile -DskipTests
+          ./mvnw test -DargLine="-Djava.library.path=/usr/local/lib"
 
       - name: Build and test with Maven (macOS)
         if: runner.os == 'macOS'
@@ -211,13 +211,13 @@ jobs:
           ls -la /usr/local/lib/libtidesdb* || true
           # DYLD_LIBRARY_PATH is needed so libtidesdb_jni.dylib can find libtidesdb.dylib at runtime
           export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
-          mvn clean compile -DskipTests
-          mvn test -DargLine="-Djava.library.path=/usr/local/lib"
+          ./mvnw clean compile -DskipTests
+          ./mvnw test -DargLine="-Djava.library.path=/usr/local/lib"
 
       - name: Build and test with Maven (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           cd tidesdb-java
-          mvn clean compile -DskipTests
-          mvn test "-DargLine=-Djava.library.path=C:\msys64\mingw64\lib"
+          ./mvnw clean compile -DskipTests
+          ./mvnw test "-DargLine=-Djava.library.path=C:\msys64\mingw64\lib"
