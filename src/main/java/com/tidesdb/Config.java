@@ -130,7 +130,32 @@ public class Config {
         }
         
         public Config build() {
+            validate();
             return new Config(this);
+        }
+
+        private void validate() throws IllegalArgumentException {
+            if (dbPath == null) {
+                throw new IllegalArgumentException("Database path cannot be null");
+            }
+            if (dbPath.isEmpty()) {
+                dbPath = "";
+            }
+            if (numFlushThreads <= 0) {
+                throw new IllegalArgumentException("Number of flush threads must be positive");
+            }
+            if (numCompactionThreads <= 0) {
+                throw new IllegalArgumentException("Number of compaction threads must be positive");
+            }
+            if (logLevel == null) {
+                throw new IllegalArgumentException("Log level cannot be null");
+            }
+            if (blockCacheSize < 0) {
+                throw new IllegalArgumentException("Block cache size cannot be negative");
+            }
+            if (maxOpenSSTables <= 0) {
+                throw new IllegalArgumentException("Max open SSTables must be positive");
+            }
         }
     }
 }
