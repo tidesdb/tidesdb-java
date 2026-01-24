@@ -66,32 +66,67 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.14.1</version>
                 <configuration>
                     <source>${maven.compiler.source}</source>
                     <target>${maven.compiler.target}</target>
                 </configuration>
             </plugin>
 
+            <!-- Versions plugin to check for dependency updates -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>2.21.0</version>
+                <configuration>
+                    <rulesUri>file://${project.basedir}/version-rules.xml</rulesUri>
+                </configuration>
+            </plugin>
+
+            <!-- Enforcer plugin to ensure Java version -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>enforce-plugin-versions</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[11,)</version>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>3.9.6</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Surefire plugin for tests -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.2</version>
+                <version>3.5.4</version>
             </plugin>
 
             <!-- JAR plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.5.0</version>
             </plugin>
 
             <!-- Source plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.4.0</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -106,7 +141,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.6.2</version>
+                <version>3.12.0</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
