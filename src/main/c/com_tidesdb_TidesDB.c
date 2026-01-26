@@ -431,13 +431,27 @@ JNIEXPORT jobject JNICALL Java_com_tidesdb_ColumnFamily_nativeGetStats(JNIEnv *e
         free(nums);
     }
 
-    jclass statsClass = (*env)->FindClass(env, "com/tidesdb/Stats");
-    jmethodID constructor =
-        (*env)->GetMethodID(env, statsClass, "<init>", "(IJ[J[ILcom/tidesdb/ColumnFamilyConfig;)V");
+    jlongArray levelKeyCounts = (*env)->NewLongArray(env, stats->num_levels);
+    if (stats->level_key_counts != NULL)
+    {
+        jlong *counts = malloc(stats->num_levels * sizeof(jlong));
+        for (int i = 0; i < stats->num_levels; i++)
+        {
+            counts[i] = (jlong)stats->level_key_counts[i];
+        }
+        (*env)->SetLongArrayRegion(env, levelKeyCounts, 0, stats->num_levels, counts);
+        free(counts);
+    }
 
-    jobject statsObj =
-        (*env)->NewObject(env, statsClass, constructor, stats->num_levels,
-                          (jlong)stats->memtable_size, levelSizes, levelNumSSTables, NULL);
+    jclass statsClass = (*env)->FindClass(env, "com/tidesdb/Stats");
+    jmethodID constructor = (*env)->GetMethodID(env, statsClass, "<init>",
+                                                "(IJ[J[ILcom/tidesdb/ColumnFamilyConfig;JJDD[JDD)V");
+
+    jobject statsObj = (*env)->NewObject(env, statsClass, constructor, stats->num_levels,
+                                         (jlong)stats->memtable_size, levelSizes, levelNumSSTables,
+                                         NULL, (jlong)stats->total_keys, (jlong)stats->total_data_size,
+                                         stats->avg_key_size, stats->avg_value_size, levelKeyCounts,
+                                         stats->read_amp, stats->hit_rate);
 
     tidesdb_free_stats(stats);
 
