@@ -29,18 +29,18 @@ public class TidesDBException extends Exception {
      * Error codes from TidesDB.
      */
     public static final int ERR_SUCCESS = 0;
-    public static final int ERR_MEMORY = 1;
-    public static final int ERR_INVALID_ARGS = 2;
-    public static final int ERR_NOT_FOUND = 3;
-    public static final int ERR_IO = 4;
-    public static final int ERR_CORRUPTION = 5;
-    public static final int ERR_EXISTS = 6;
-    public static final int ERR_CONFLICT = 7;
-    public static final int ERR_TOO_LARGE = 8;
-    public static final int ERR_MEMORY_LIMIT = 9;
-    public static final int ERR_INVALID_DB = 10;
-    public static final int ERR_UNKNOWN = 11;
-    public static final int ERR_LOCKED = 12;
+    public static final int ERR_MEMORY = -1;
+    public static final int ERR_INVALID_ARGS = -2;
+    public static final int ERR_NOT_FOUND = -3;
+    public static final int ERR_IO = -4;
+    public static final int ERR_CORRUPTION = -5;
+    public static final int ERR_EXISTS = -6;
+    public static final int ERR_CONFLICT = -7;
+    public static final int ERR_TOO_LARGE = -8;
+    public static final int ERR_MEMORY_LIMIT = -9;
+    public static final int ERR_INVALID_DB = -10;
+    public static final int ERR_UNKNOWN = -11;
+    public static final int ERR_LOCKED = -12;
     
     public TidesDBException(String message) {
         super(message);
