@@ -145,7 +145,7 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
         .min_levels = minLevels,
         .dividing_level_offset = dividingLevelOffset,
         .klog_value_threshold = (size_t)klogValueThreshold,
-        .compression_algo = (compression_algorithm)compressionAlgorithm,
+        .compression_algorithm = (compression_algorithm)compressionAlgorithm,
         .enable_bloom_filter = enableBloomFilter ? 1 : 0,
         .bloom_fpr = bloomFPR,
         .enable_block_indexes = enableBlockIndexes ? 1 : 0,
@@ -341,6 +341,59 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeRegisterComparator(JNIEnv 
     }
 }
 
+JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeBackup(JNIEnv *env, jclass cls, jlong handle,
+                                                             jstring dir)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    const char *backupDir = (*env)->GetStringUTFChars(env, dir, NULL);
+    if (backupDir == NULL)
+    {
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get backup directory");
+        return;
+    }
+
+    int result = tidesdb_backup(db, (char *)backupDir);
+
+    (*env)->ReleaseStringUTFChars(env, dir, backupDir);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeRenameColumnFamily(JNIEnv *env, jclass cls,
+                                                                          jlong handle,
+                                                                          jstring oldName,
+                                                                          jstring newName)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    const char *oldCfName = (*env)->GetStringUTFChars(env, oldName, NULL);
+    if (oldCfName == NULL)
+    {
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get old column family name");
+        return;
+    }
+
+    const char *newCfName = (*env)->GetStringUTFChars(env, newName, NULL);
+    if (newCfName == NULL)
+    {
+        (*env)->ReleaseStringUTFChars(env, oldName, oldCfName);
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get new column family name");
+        return;
+    }
+
+    int result = tidesdb_rename_column_family(db, oldCfName, newCfName);
+
+    (*env)->ReleaseStringUTFChars(env, oldName, oldCfName);
+    (*env)->ReleaseStringUTFChars(env, newName, newCfName);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
 JNIEXPORT jobject JNICALL Java_com_tidesdb_ColumnFamily_nativeGetStats(JNIEnv *env, jclass cls,
                                                                        jlong handle)
 {
@@ -408,6 +461,43 @@ JNIEXPORT void JNICALL Java_com_tidesdb_ColumnFamily_nativeFlushMemtable(JNIEnv 
 {
     tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
     int result = tidesdb_flush_memtable(cf);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_tidesdb_ColumnFamily_nativeIsFlushing(JNIEnv *env, jclass cls,
+                                                                          jlong handle)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+    return tidesdb_is_flushing(cf) != 0;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_tidesdb_ColumnFamily_nativeIsCompacting(JNIEnv *env, jclass cls,
+                                                                            jlong handle)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+    return tidesdb_is_compacting(cf) != 0;
+}
+
+JNIEXPORT void JNICALL Java_com_tidesdb_ColumnFamily_nativeUpdateRuntimeConfig(
+    JNIEnv *env, jclass cls, jlong handle, jlong writeBufferSize, jint skipListMaxLevel,
+    jfloat skipListProbability, jdouble bloomFPR, jint indexSampleRatio, jint syncMode,
+    jlong syncIntervalUs, jboolean persistToDisk)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+
+    tidesdb_column_family_config_t config = {.write_buffer_size = (size_t)writeBufferSize,
+                                             .skip_list_max_level = skipListMaxLevel,
+                                             .skip_list_probability = skipListProbability,
+                                             .bloom_fpr = bloomFPR,
+                                             .index_sample_ratio = indexSampleRatio,
+                                             .sync_mode = syncMode,
+                                             .sync_interval_us = (uint64_t)syncIntervalUs};
+
+    int result = tidesdb_cf_update_runtime_config(cf, &config, persistToDisk ? 1 : 0);
 
     if (result != TDB_SUCCESS)
     {

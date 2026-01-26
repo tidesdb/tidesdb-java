@@ -74,26 +74,26 @@ public class ColumnFamilyConfig {
      */
     public static ColumnFamilyConfig defaultConfig() {
         return new Builder()
-            .writeBufferSize(64 * 1024 * 1024)
+            .writeBufferSize(128 * 1024 * 1024)
             .levelSizeRatio(10)
-            .minLevels(4)
+            .minLevels(5)
             .dividingLevelOffset(2)
-            .klogValueThreshold(1024)
-            .compressionAlgorithm(CompressionAlgorithm.NO_COMPRESSION)
-            .enableBloomFilter(false)
+            .klogValueThreshold(512)
+            .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
+            .enableBloomFilter(true)
             .bloomFPR(0.01)
-            .enableBlockIndexes(false)
-            .indexSampleRatio(16)
-            .blockIndexPrefixLen(4)
-            .syncMode(SyncMode.SYNC_NONE)
-            .syncIntervalUs(0)
+            .enableBlockIndexes(true)
+            .indexSampleRatio(1)
+            .blockIndexPrefixLen(16)
+            .syncMode(SyncMode.SYNC_FULL)
+            .syncIntervalUs(1000000)
             .comparatorName("")
             .skipListMaxLevel(12)
             .skipListProbability(0.25f)
             .defaultIsolationLevel(IsolationLevel.READ_COMMITTED)
-            .minDiskSpace(1024 * 1024 * 1024)
+            .minDiskSpace(100 * 1024 * 1024)
             .l1FileCountTrigger(4)
-            .l0QueueStallThreshold(8)
+            .l0QueueStallThreshold(20)
             .build();
     }
     
@@ -131,26 +131,26 @@ public class ColumnFamilyConfig {
      * Builder for ColumnFamilyConfig.
      */
     public static class Builder {
-        private long writeBufferSize = 64 * 1024 * 1024;
+        private long writeBufferSize = 128 * 1024 * 1024;
         private long levelSizeRatio = 10;
-        private int minLevels = 4;
+        private int minLevels = 5;
         private int dividingLevelOffset = 2;
-        private long klogValueThreshold = 1024;
-        private CompressionAlgorithm compressionAlgorithm = CompressionAlgorithm.NO_COMPRESSION;
-        private boolean enableBloomFilter = false;
+        private long klogValueThreshold = 512;
+        private CompressionAlgorithm compressionAlgorithm = CompressionAlgorithm.LZ4_COMPRESSION;
+        private boolean enableBloomFilter = true;
         private double bloomFPR = 0.01;
-        private boolean enableBlockIndexes = false;
-        private int indexSampleRatio = 16;
-        private int blockIndexPrefixLen = 4;
-        private SyncMode syncMode = SyncMode.SYNC_NONE;
-        private long syncIntervalUs = 0;
+        private boolean enableBlockIndexes = true;
+        private int indexSampleRatio = 1;
+        private int blockIndexPrefixLen = 16;
+        private SyncMode syncMode = SyncMode.SYNC_FULL;
+        private long syncIntervalUs = 1000000;
         private String comparatorName = "";
         private int skipListMaxLevel = 12;
         private float skipListProbability = 0.25f;
         private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_COMMITTED;
-        private long minDiskSpace = 1024 * 1024 * 1024;
+        private long minDiskSpace = 100 * 1024 * 1024;
         private int l1FileCountTrigger = 4;
-        private int l0QueueStallThreshold = 8;
+        private int l0QueueStallThreshold = 20;
         
         public Builder writeBufferSize(long writeBufferSize) {
             this.writeBufferSize = writeBufferSize;

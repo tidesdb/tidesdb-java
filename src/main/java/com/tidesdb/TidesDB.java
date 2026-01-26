@@ -211,6 +211,39 @@ public class TidesDB implements Closeable {
         nativeRegisterComparator(nativeHandle, name, context);
     }
     
+    /**
+     * Creates an on-disk snapshot of the database without blocking normal reads/writes.
+     *
+     * @param dir the backup directory (must be non-existent or empty)
+     * @throws TidesDBException if the backup fails
+     */
+    public void backup(String dir) throws TidesDBException {
+        checkNotClosed();
+        if (dir == null || dir.isEmpty()) {
+            throw new IllegalArgumentException("Backup directory cannot be null or empty");
+        }
+        nativeBackup(nativeHandle, dir);
+    }
+    
+    /**
+     * Atomically renames a column family and its underlying directory.
+     * The operation waits for any in-progress flush or compaction to complete before renaming.
+     *
+     * @param oldName the current column family name
+     * @param newName the new column family name
+     * @throws TidesDBException if the rename fails
+     */
+    public void renameColumnFamily(String oldName, String newName) throws TidesDBException {
+        checkNotClosed();
+        if (oldName == null || oldName.isEmpty()) {
+            throw new IllegalArgumentException("Old column family name cannot be null or empty");
+        }
+        if (newName == null || newName.isEmpty()) {
+            throw new IllegalArgumentException("New column family name cannot be null or empty");
+        }
+        nativeRenameColumnFamily(nativeHandle, oldName, newName);
+    }
+    
     private void checkNotClosed() {
         if (closed) {
             throw new IllegalStateException("TidesDB instance is closed");
@@ -247,4 +280,8 @@ public class TidesDB implements Closeable {
     private static native CacheStats nativeGetCacheStats(long handle) throws TidesDBException;
     
     private static native void nativeRegisterComparator(long handle, String name, String context) throws TidesDBException;
+    
+    private static native void nativeBackup(long handle, String dir) throws TidesDBException;
+    
+    private static native void nativeRenameColumnFamily(long handle, String oldName, String newName) throws TidesDBException;
 }

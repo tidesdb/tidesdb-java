@@ -73,6 +73,58 @@ public class ColumnFamily {
         nativeFlushMemtable(nativeHandle);
     }
     
+    /**
+     * Checks if a flush operation is currently in progress for this column family.
+     *
+     * @return true if flushing is in progress
+     */
+    public boolean isFlushing() {
+        return nativeIsFlushing(nativeHandle);
+    }
+    
+    /**
+     * Checks if a compaction operation is currently in progress for this column family.
+     *
+     * @return true if compaction is in progress
+     */
+    public boolean isCompacting() {
+        return nativeIsCompacting(nativeHandle);
+    }
+    
+    /**
+     * Updates runtime-safe configuration settings for this column family.
+     * Configuration changes are applied to new operations only.
+     * 
+     * <p>Updatable settings (safe to change at runtime):</p>
+     * <ul>
+     *   <li>writeBufferSize - Memtable flush threshold</li>
+     *   <li>skipListMaxLevel - Skip list level for new memtables</li>
+     *   <li>skipListProbability - Skip list probability for new memtables</li>
+     *   <li>bloomFPR - False positive rate for new SSTables</li>
+     *   <li>indexSampleRatio - Index sampling ratio for new SSTables</li>
+     *   <li>syncMode - Durability mode</li>
+     *   <li>syncIntervalUs - Sync interval in microseconds</li>
+     * </ul>
+     *
+     * @param config the new configuration
+     * @param persistToDisk if true, saves changes to config.ini
+     * @throws TidesDBException if the update fails
+     */
+    public void updateRuntimeConfig(ColumnFamilyConfig config, boolean persistToDisk) throws TidesDBException {
+        if (config == null) {
+            throw new IllegalArgumentException("Config cannot be null");
+        }
+        nativeUpdateRuntimeConfig(nativeHandle,
+            config.getWriteBufferSize(),
+            config.getSkipListMaxLevel(),
+            config.getSkipListProbability(),
+            config.getBloomFPR(),
+            config.getIndexSampleRatio(),
+            config.getSyncMode().getValue(),
+            config.getSyncIntervalUs(),
+            persistToDisk);
+    }
+    
     long getNativeHandle() {
         return nativeHandle;
     }
@@ -80,4 +132,9 @@ public class ColumnFamily {
     private static native Stats nativeGetStats(long handle) throws TidesDBException;
     private static native void nativeCompact(long handle) throws TidesDBException;
     private static native void nativeFlushMemtable(long handle) throws TidesDBException;
+    private static native boolean nativeIsFlushing(long handle);
+    private static native boolean nativeIsCompacting(long handle);
+    private static native void nativeUpdateRuntimeConfig(long handle, long writeBufferSize,
+        int skipListMaxLevel, float skipListProbability, double bloomFPR, int indexSampleRatio,
+        int syncMode, long syncIntervalUs, boolean persistToDisk) throws TidesDBException;
 }
