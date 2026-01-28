@@ -58,7 +58,9 @@ public class TidesDB implements Closeable {
             config.getNumCompactionThreads(),
             config.getLogLevel().getValue(),
             config.getBlockCacheSize(),
-            config.getMaxOpenSSTables()
+            config.getMaxOpenSSTables(),
+            config.isLogToFile(),
+            config.getLogTruncationAt()
         );
         
         return new TidesDB(handle);
@@ -255,7 +257,8 @@ public class TidesDB implements Closeable {
     }
     
     private static native long nativeOpen(String dbPath, int numFlushThreads, int numCompactionThreads,
-                                          int logLevel, long blockCacheSize, long maxOpenSSTables) throws TidesDBException;
+                                          int logLevel, long blockCacheSize, long maxOpenSSTables,
+                                          boolean logToFile, long logTruncationAt) throws TidesDBException;
     
     private static native void nativeClose(long handle);
     

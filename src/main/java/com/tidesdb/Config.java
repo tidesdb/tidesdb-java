@@ -29,6 +29,8 @@ public class Config {
     private LogLevel logLevel;
     private long blockCacheSize;
     private long maxOpenSSTables;
+    private boolean logToFile;
+    private long logTruncationAt;
     
     private Config(Builder builder) {
         this.dbPath = builder.dbPath;
@@ -37,6 +39,8 @@ public class Config {
         this.logLevel = builder.logLevel;
         this.blockCacheSize = builder.blockCacheSize;
         this.maxOpenSSTables = builder.maxOpenSSTables;
+        this.logToFile = builder.logToFile;
+        this.logTruncationAt = builder.logTruncationAt;
     }
     
     /**
@@ -51,6 +55,8 @@ public class Config {
             .logLevel(LogLevel.INFO)
             .blockCacheSize(64 * 1024 * 1024)
             .maxOpenSSTables(256)
+            .logToFile(false)
+            .logTruncationAt(24 * 1024 * 1024)
             .build();
     }
     
@@ -88,6 +94,14 @@ public class Config {
         return maxOpenSSTables;
     }
     
+    public boolean isLogToFile() {
+        return logToFile;
+    }
+    
+    public long getLogTruncationAt() {
+        return logTruncationAt;
+    }
+    
     /**
      * Builder for Config.
      */
@@ -98,6 +112,8 @@ public class Config {
         private LogLevel logLevel = LogLevel.INFO;
         private long blockCacheSize = 64 * 1024 * 1024;
         private long maxOpenSSTables = 256;
+        private boolean logToFile = false;
+        private long logTruncationAt = 24 * 1024 * 1024;
         
         public Builder dbPath(String dbPath) {
             this.dbPath = dbPath;
@@ -126,6 +142,16 @@ public class Config {
         
         public Builder maxOpenSSTables(long maxOpenSSTables) {
             this.maxOpenSSTables = maxOpenSSTables;
+            return this;
+        }
+        
+        public Builder logToFile(boolean logToFile) {
+            this.logToFile = logToFile;
+            return this;
+        }
+        
+        public Builder logTruncationAt(long logTruncationAt) {
+            this.logTruncationAt = logTruncationAt;
             return this;
         }
         

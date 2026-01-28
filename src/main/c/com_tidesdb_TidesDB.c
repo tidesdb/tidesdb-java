@@ -77,7 +77,8 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDB_nativeOpen(JNIEnv *env, jclass 
                                                             jint numFlushThreads,
                                                             jint numCompactionThreads,
                                                             jint logLevel, jlong blockCacheSize,
-                                                            jlong maxOpenSSTables)
+                                                            jlong maxOpenSSTables, jboolean logToFile,
+                                                            jlong logTruncationAt)
 {
     const char *path = (*env)->GetStringUTFChars(env, dbPath, NULL);
     if (path == NULL)
@@ -91,7 +92,9 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDB_nativeOpen(JNIEnv *env, jclass 
                                .num_compaction_threads = numCompactionThreads,
                                .log_level = (tidesdb_log_level_t)logLevel,
                                .block_cache_size = (size_t)blockCacheSize,
-                               .max_open_sstables = (size_t)maxOpenSSTables};
+                               .max_open_sstables = (size_t)maxOpenSSTables,
+                               .log_to_file = logToFile ? 1 : 0,
+                               .log_truncation_at = (size_t)logTruncationAt};
 
     tidesdb_t *db = NULL;
     int result = tidesdb_open(&config, &db);
