@@ -391,6 +391,13 @@ public class TidesDBTest {
             Stats stats = cf.getStats();
             assertNotNull(stats);
             assertTrue(stats.getNumLevels() >= 0);
+            assertTrue(stats.getTotalKeys() >= 0);
+            assertTrue(stats.getTotalDataSize() >= 0);
+            assertTrue(stats.getAvgKeySize() >= 0);
+            assertTrue(stats.getAvgValueSize() >= 0);
+            assertTrue(stats.getReadAmp() >= 0);
+            assertTrue(stats.getHitRate() >= 0.0 && stats.getHitRate() <= 1.0);
+            assertFalse(stats.isUseBtree());
         }
     }
     
@@ -446,6 +453,109 @@ public class TidesDBTest {
 
     @Test
     @Order(13)
+    void testBtreeColumnFamily() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb13").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
+                .writeBufferSize(128 * 1024 * 1024)
+                .levelSizeRatio(10)
+                .minLevels(5)
+                .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
+                .enableBloomFilter(true)
+                .bloomFPR(0.01)
+                .enableBlockIndexes(true)
+                .syncMode(SyncMode.SYNC_FULL)
+                .useBtree(true)
+                .build();
+            
+            db.createColumnFamily("btree_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("btree_cf");
+            assertNotNull(cf);
+            assertEquals("btree_cf", cf.getName());
+            
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 100; i++) {
+                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
+                }
+                txn.commit();
+            }
+            
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] result = txn.get(cf, "key50".getBytes());
+                assertNotNull(result);
+                assertArrayEquals("value50".getBytes(), result);
+            }
+            
+            Stats stats = cf.getStats();
+            assertNotNull(stats);
+            assertTrue(stats.isUseBtree());
+            assertTrue(stats.getBtreeTotalNodes() >= 0);
+            assertTrue(stats.getBtreeMaxHeight() >= 0);
+            assertTrue(stats.getBtreeAvgHeight() >= 0.0);
+        }
+    }
+    
+    @Test
+    @Order(14)
+    void testBtreeIterator() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb14").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
+                .writeBufferSize(128 * 1024 * 1024)
+                .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
+                .enableBloomFilter(true)
+                .useBtree(true)
+                .build();
+            
+            db.createColumnFamily("btree_iter_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("btree_iter_cf");
+            
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 10; i++) {
+                    String key = String.format("key%02d", i);
+                    String value = "value" + i;
+                    txn.put(cf, key.getBytes(), value.getBytes());
+                }
+                txn.commit();
+            }
+            
+            try (Transaction txn = db.beginTransaction()) {
+                try (TidesDBIterator iter = txn.newIterator(cf)) {
+                    iter.seekToFirst();
+                    
+                    int count = 0;
+                    while (iter.isValid()) {
+                        byte[] key = iter.key();
+                        byte[] value = iter.value();
+                        assertNotNull(key);
+                        assertNotNull(value);
+                        count++;
+                        iter.next();
+                    }
+                    assertEquals(10, count);
+                }
+            }
+        }
+    }
+    
+    @Test
+    @Order(15)
     void testTransactionPutGetDeleteBadKey() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb3").toString())
                 .numFlushThreads(2)

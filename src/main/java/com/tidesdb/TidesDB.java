@@ -114,7 +114,8 @@ public class TidesDB implements Closeable {
             config.getDefaultIsolationLevel().getValue(),
             config.getMinDiskSpace(),
             config.getL1FileCountTrigger(),
-            config.getL0QueueStallThreshold()
+            config.getL0QueueStallThreshold(),
+            config.isUseBtree()
         );
     }
     
@@ -268,7 +269,7 @@ public class TidesDB implements Closeable {
         double bloomFPR, boolean enableBlockIndexes, int indexSampleRatio, int blockIndexPrefixLen,
         int syncMode, long syncIntervalUs, String comparatorName, int skipListMaxLevel,
         float skipListProbability, int defaultIsolationLevel, long minDiskSpace,
-        int l1FileCountTrigger, int l0QueueStallThreshold) throws TidesDBException;
+        int l1FileCountTrigger, int l0QueueStallThreshold, boolean useBtree) throws TidesDBException;
     
     private static native void nativeDropColumnFamily(long handle, String name) throws TidesDBException;
     
