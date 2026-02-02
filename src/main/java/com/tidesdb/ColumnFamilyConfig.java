@@ -43,6 +43,7 @@ public class ColumnFamilyConfig {
     private long minDiskSpace;
     private int l1FileCountTrigger;
     private int l0QueueStallThreshold;
+    private boolean useBtree;
     
     private ColumnFamilyConfig(Builder builder) {
         this.writeBufferSize = builder.writeBufferSize;
@@ -65,6 +66,7 @@ public class ColumnFamilyConfig {
         this.minDiskSpace = builder.minDiskSpace;
         this.l1FileCountTrigger = builder.l1FileCountTrigger;
         this.l0QueueStallThreshold = builder.l0QueueStallThreshold;
+        this.useBtree = builder.useBtree;
     }
     
     /**
@@ -94,6 +96,7 @@ public class ColumnFamilyConfig {
             .minDiskSpace(100 * 1024 * 1024)
             .l1FileCountTrigger(4)
             .l0QueueStallThreshold(20)
+            .useBtree(false)
             .build();
     }
     
@@ -126,6 +129,7 @@ public class ColumnFamilyConfig {
     public long getMinDiskSpace() { return minDiskSpace; }
     public int getL1FileCountTrigger() { return l1FileCountTrigger; }
     public int getL0QueueStallThreshold() { return l0QueueStallThreshold; }
+    public boolean isUseBtree() { return useBtree; }
     
     /**
      * Builder for ColumnFamilyConfig.
@@ -151,6 +155,7 @@ public class ColumnFamilyConfig {
         private long minDiskSpace = 100 * 1024 * 1024;
         private int l1FileCountTrigger = 4;
         private int l0QueueStallThreshold = 20;
+        private boolean useBtree = false;
         
         public Builder writeBufferSize(long writeBufferSize) {
             this.writeBufferSize = writeBufferSize;
@@ -249,6 +254,11 @@ public class ColumnFamilyConfig {
         
         public Builder l0QueueStallThreshold(int l0QueueStallThreshold) {
             this.l0QueueStallThreshold = l0QueueStallThreshold;
+            return this;
+        }
+        
+        public Builder useBtree(boolean useBtree) {
+            this.useBtree = useBtree;
             return this;
         }
         

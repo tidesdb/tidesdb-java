@@ -35,11 +35,16 @@ public class Stats {
     private final long[] levelKeyCounts;
     private final double readAmp;
     private final double hitRate;
+    private final boolean useBtree;
+    private final long btreeTotalNodes;
+    private final int btreeMaxHeight;
+    private final double btreeAvgHeight;
     
     public Stats(int numLevels, long memtableSize, long[] levelSizes, int[] levelNumSSTables, 
                  ColumnFamilyConfig config, long totalKeys, long totalDataSize, 
                  double avgKeySize, double avgValueSize, long[] levelKeyCounts,
-                 double readAmp, double hitRate) {
+                 double readAmp, double hitRate, boolean useBtree, long btreeTotalNodes,
+                 int btreeMaxHeight, double btreeAvgHeight) {
         this.numLevels = numLevels;
         this.memtableSize = memtableSize;
         this.levelSizes = levelSizes;
@@ -52,6 +57,10 @@ public class Stats {
         this.levelKeyCounts = levelKeyCounts;
         this.readAmp = readAmp;
         this.hitRate = hitRate;
+        this.useBtree = useBtree;
+        this.btreeTotalNodes = btreeTotalNodes;
+        this.btreeMaxHeight = btreeMaxHeight;
+        this.btreeAvgHeight = btreeAvgHeight;
     }
     
     /**
@@ -162,6 +171,45 @@ public class Stats {
         return hitRate;
     }
     
+    /**
+     * Returns whether this column family uses B+tree format.
+     *
+     * @return true if B+tree format is used
+     */
+    public boolean isUseBtree() {
+        return useBtree;
+    }
+    
+    /**
+     * Gets the total number of B+tree nodes across all SSTables.
+     * Only populated when useBtree is true.
+     *
+     * @return total B+tree nodes
+     */
+    public long getBtreeTotalNodes() {
+        return btreeTotalNodes;
+    }
+    
+    /**
+     * Gets the maximum B+tree height across all SSTables.
+     * Only populated when useBtree is true.
+     *
+     * @return maximum tree height
+     */
+    public int getBtreeMaxHeight() {
+        return btreeMaxHeight;
+    }
+    
+    /**
+     * Gets the average B+tree height across all SSTables.
+     * Only populated when useBtree is true.
+     *
+     * @return average tree height
+     */
+    public double getBtreeAvgHeight() {
+        return btreeAvgHeight;
+    }
+    
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -173,6 +221,12 @@ public class Stats {
         sb.append(", avgValueSize=").append(avgValueSize);
         sb.append(", readAmp=").append(readAmp);
         sb.append(", hitRate=").append(hitRate);
+        sb.append(", useBtree=").append(useBtree);
+        if (useBtree) {
+            sb.append(", btreeTotalNodes=").append(btreeTotalNodes);
+            sb.append(", btreeMaxHeight=").append(btreeMaxHeight);
+            sb.append(", btreeAvgHeight=").append(btreeAvgHeight);
+        }
         if (levelSizes != null) {
             sb.append(", levelSizes=[");
             for (int i = 0; i < levelSizes.length; i++) {

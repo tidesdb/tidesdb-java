@@ -126,7 +126,7 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
     jboolean enableBlockIndexes, jint indexSampleRatio, jint blockIndexPrefixLen, jint syncMode,
     jlong syncIntervalUs, jstring comparatorName, jint skipListMaxLevel, jfloat skipListProbability,
     jint defaultIsolationLevel, jlong minDiskSpace, jint l1FileCountTrigger,
-    jint l0QueueStallThreshold)
+    jint l0QueueStallThreshold, jboolean useBtree)
 {
     tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
     const char *cfName = (*env)->GetStringUTFChars(env, name, NULL);
@@ -161,7 +161,8 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
         .default_isolation_level = (tidesdb_isolation_level_t)defaultIsolationLevel,
         .min_disk_space = (uint64_t)minDiskSpace,
         .l1_file_count_trigger = l1FileCountTrigger,
-        .l0_queue_stall_threshold = l0QueueStallThreshold};
+        .l0_queue_stall_threshold = l0QueueStallThreshold,
+        .use_btree = useBtree ? 1 : 0};
 
     memset(config.comparator_name, 0, TDB_MAX_COMPARATOR_NAME);
     if (compName != NULL && strlen(compName) > 0)
@@ -448,13 +449,15 @@ JNIEXPORT jobject JNICALL Java_com_tidesdb_ColumnFamily_nativeGetStats(JNIEnv *e
 
     jclass statsClass = (*env)->FindClass(env, "com/tidesdb/Stats");
     jmethodID constructor = (*env)->GetMethodID(env, statsClass, "<init>",
-                                                "(IJ[J[ILcom/tidesdb/ColumnFamilyConfig;JJDD[JDD)V");
+                                                "(IJ[J[ILcom/tidesdb/ColumnFamilyConfig;JJDD[JDDZJID)V");
 
     jobject statsObj = (*env)->NewObject(env, statsClass, constructor, stats->num_levels,
                                          (jlong)stats->memtable_size, levelSizes, levelNumSSTables,
                                          NULL, (jlong)stats->total_keys, (jlong)stats->total_data_size,
                                          stats->avg_key_size, stats->avg_value_size, levelKeyCounts,
-                                         stats->read_amp, stats->hit_rate);
+                                         stats->read_amp, stats->hit_rate,
+                                         stats->use_btree != 0, (jlong)stats->btree_total_nodes,
+                                         (jint)stats->btree_max_height, stats->btree_avg_height);
 
     tidesdb_free_stats(stats);
 
