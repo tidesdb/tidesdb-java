@@ -247,6 +247,26 @@ public class TidesDB implements Closeable {
         nativeRenameColumnFamily(nativeHandle, oldName, newName);
     }
     
+    /**
+     * Creates a complete copy of an existing column family with a new name.
+     * The clone contains all the data from the source at the time of cloning.
+     * The clone is completely independent - modifications to one do not affect the other.
+     *
+     * @param sourceName the source column family name
+     * @param destName the destination column family name
+     * @throws TidesDBException if the clone fails
+     */
+    public void cloneColumnFamily(String sourceName, String destName) throws TidesDBException {
+        checkNotClosed();
+        if (sourceName == null || sourceName.isEmpty()) {
+            throw new IllegalArgumentException("Source column family name cannot be null or empty");
+        }
+        if (destName == null || destName.isEmpty()) {
+            throw new IllegalArgumentException("Destination column family name cannot be null or empty");
+        }
+        nativeCloneColumnFamily(nativeHandle, sourceName, destName);
+    }
+    
     private void checkNotClosed() {
         if (closed) {
             throw new IllegalStateException("TidesDB instance is closed");
@@ -288,4 +308,6 @@ public class TidesDB implements Closeable {
     private static native void nativeBackup(long handle, String dir) throws TidesDBException;
     
     private static native void nativeRenameColumnFamily(long handle, String oldName, String newName) throws TidesDBException;
+    
+    private static native void nativeCloneColumnFamily(long handle, String sourceName, String destName) throws TidesDBException;
 }

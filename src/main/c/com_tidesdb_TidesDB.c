@@ -398,6 +398,38 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeRenameColumnFamily(JNIEnv 
     }
 }
 
+JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCloneColumnFamily(JNIEnv *env, jclass cls,
+                                                                        jlong handle,
+                                                                        jstring sourceName,
+                                                                        jstring destName)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    const char *srcCfName = (*env)->GetStringUTFChars(env, sourceName, NULL);
+    if (srcCfName == NULL)
+    {
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get source column family name");
+        return;
+    }
+
+    const char *dstCfName = (*env)->GetStringUTFChars(env, destName, NULL);
+    if (dstCfName == NULL)
+    {
+        (*env)->ReleaseStringUTFChars(env, sourceName, srcCfName);
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get destination column family name");
+        return;
+    }
+
+    int result = tidesdb_clone_column_family(db, srcCfName, dstCfName);
+
+    (*env)->ReleaseStringUTFChars(env, sourceName, srcCfName);
+    (*env)->ReleaseStringUTFChars(env, destName, dstCfName);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
 JNIEXPORT jobject JNICALL Java_com_tidesdb_ColumnFamily_nativeGetStats(JNIEnv *env, jclass cls,
                                                                        jlong handle)
 {

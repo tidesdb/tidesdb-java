@@ -556,6 +556,64 @@ public class TidesDBTest {
     
     @Test
     @Order(15)
+    void testCloneColumnFamily() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb15").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("source_cf", cfConfig);
+            
+            ColumnFamily sourceCf = db.getColumnFamily("source_cf");
+            
+            // Insert data into source
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 10; i++) {
+                    txn.put(sourceCf, ("key" + i).getBytes(), ("value" + i).getBytes());
+                }
+                txn.commit();
+            }
+            
+            // Clone the column family
+            db.cloneColumnFamily("source_cf", "cloned_cf");
+            
+            // Verify clone exists
+            ColumnFamily clonedCf = db.getColumnFamily("cloned_cf");
+            assertNotNull(clonedCf);
+            assertEquals("cloned_cf", clonedCf.getName());
+            
+            // Verify both column families are listed
+            String[] families = db.listColumnFamilies();
+            assertTrue(families.length >= 2);
+            
+            // Verify data exists in clone
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 10; i++) {
+                    byte[] result = txn.get(clonedCf, ("key" + i).getBytes());
+                    assertNotNull(result);
+                    assertArrayEquals(("value" + i).getBytes(), result);
+                }
+            }
+            
+            // Verify independence: insert into clone, should not appear in source
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(clonedCf, "clone_only_key".getBytes(), "clone_only_value".getBytes());
+                txn.commit();
+            }
+            
+            try (Transaction txn = db.beginTransaction()) {
+                assertThrows(TidesDBException.class, () -> txn.get(sourceCf, "clone_only_key".getBytes()));
+            }
+        }
+    }
+    
+    @Test
+    @Order(16)
     void testTransactionPutGetDeleteBadKey() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb3").toString())
                 .numFlushThreads(2)
