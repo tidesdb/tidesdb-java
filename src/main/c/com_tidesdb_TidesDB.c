@@ -724,6 +724,18 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_Transaction_nativeNewIterator(JNIEnv *e
     return (jlong)(uintptr_t)iter;
 }
 
+JNIEXPORT void JNICALL Java_com_tidesdb_Transaction_nativeReset(JNIEnv *env, jclass cls,
+                                                                jlong handle, jint isolationLevel)
+{
+    tidesdb_txn_t *txn = (tidesdb_txn_t *)(uintptr_t)handle;
+    int result = tidesdb_txn_reset(txn, (tidesdb_isolation_level_t)isolationLevel);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
 JNIEXPORT void JNICALL Java_com_tidesdb_Transaction_nativeFree(JNIEnv *env, jclass cls,
                                                                jlong handle)
 {

@@ -654,4 +654,122 @@ public class TidesDBTest {
             });
         }
     }
+    
+    @Test
+    @Order(17)
+    void testTransactionReset() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb17").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            // Begin transaction and do first batch of work
+            Transaction txn = db.beginTransaction();
+            txn.put(cf, "key1".getBytes(), "value1".getBytes());
+            txn.commit();
+            
+            // Reset instead of free + begin
+            txn.reset(IsolationLevel.READ_COMMITTED);
+            
+            // Second batch of work using the same transaction
+            txn.put(cf, "key2".getBytes(), "value2".getBytes());
+            txn.commit();
+            
+            // Free once when done
+            txn.free();
+            
+            // Verify both keys exist
+            try (Transaction readTxn = db.beginTransaction()) {
+                byte[] result1 = readTxn.get(cf, "key1".getBytes());
+                assertNotNull(result1);
+                assertArrayEquals("value1".getBytes(), result1);
+                
+                byte[] result2 = readTxn.get(cf, "key2".getBytes());
+                assertNotNull(result2);
+                assertArrayEquals("value2".getBytes(), result2);
+            }
+        }
+    }
+    
+    @Test
+    @Order(18)
+    void testTransactionResetWithDifferentIsolation() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb18").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            // Begin with READ_COMMITTED
+            Transaction txn = db.beginTransaction(IsolationLevel.READ_COMMITTED);
+            txn.put(cf, "key1".getBytes(), "value1".getBytes());
+            txn.commit();
+            
+            // Reset with different isolation level (REPEATABLE_READ)
+            txn.reset(IsolationLevel.REPEATABLE_READ);
+            txn.put(cf, "key2".getBytes(), "value2".getBytes());
+            txn.commit();
+            
+            // Reset again with SERIALIZABLE
+            txn.reset(IsolationLevel.SERIALIZABLE);
+            txn.put(cf, "key3".getBytes(), "value3".getBytes());
+            txn.commit();
+            
+            txn.free();
+            
+            // Verify all keys exist
+            try (Transaction readTxn = db.beginTransaction()) {
+                for (int i = 1; i <= 3; i++) {
+                    byte[] result = readTxn.get(cf, ("key" + i).getBytes());
+                    assertNotNull(result);
+                    assertArrayEquals(("value" + i).getBytes(), result);
+                }
+            }
+        }
+    }
+    
+    @Test
+    @Order(19)
+    void testTransactionResetNullIsolation() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb19").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            Transaction txn = db.beginTransaction();
+            txn.put(cf, "key1".getBytes(), "value1".getBytes());
+            txn.commit();
+            
+            // Null isolation level should throw IllegalArgumentException
+            assertThrows(IllegalArgumentException.class, () -> txn.reset(null));
+            
+            txn.free();
+        }
+    }
 }

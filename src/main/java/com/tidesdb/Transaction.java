@@ -188,6 +188,21 @@ public class Transaction implements Closeable {
     }
     
     /**
+     * Resets a committed or aborted transaction for reuse with a new isolation level.
+     * This avoids the overhead of freeing and reallocating transaction resources in hot loops.
+     *
+     * @param isolation the new isolation level for the reset transaction
+     * @throws TidesDBException if the reset fails (e.g., transaction is still active)
+     */
+    public void reset(IsolationLevel isolation) throws TidesDBException {
+        checkNotFreed();
+        if (isolation == null) {
+            throw new IllegalArgumentException("Isolation level cannot be null");
+        }
+        nativeReset(nativeHandle, isolation.getValue());
+    }
+    
+    /**
      * Frees the transaction resources.
      */
     public void free() {
@@ -225,5 +240,6 @@ public class Transaction implements Closeable {
     private static native void nativeRollbackToSavepoint(long handle, String name) throws TidesDBException;
     private static native void nativeReleaseSavepoint(long handle, String name) throws TidesDBException;
     private static native long nativeNewIterator(long handle, long cfHandle) throws TidesDBException;
+    private static native void nativeReset(long handle, int isolationLevel) throws TidesDBException;
     private static native void nativeFree(long handle);
 }
