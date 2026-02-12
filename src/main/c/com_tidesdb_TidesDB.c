@@ -366,6 +366,27 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeBackup(JNIEnv *env, jclass
     }
 }
 
+JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCheckpoint(JNIEnv *env, jclass cls,
+                                                                 jlong handle, jstring dir)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    const char *checkpointDir = (*env)->GetStringUTFChars(env, dir, NULL);
+    if (checkpointDir == NULL)
+    {
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get checkpoint directory");
+        return;
+    }
+
+    int result = tidesdb_checkpoint(db, checkpointDir);
+
+    (*env)->ReleaseStringUTFChars(env, dir, checkpointDir);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
 JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeRenameColumnFamily(JNIEnv *env, jclass cls,
                                                                           jlong handle,
                                                                           jstring oldName,

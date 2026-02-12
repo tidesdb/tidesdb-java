@@ -614,6 +614,76 @@ public class TidesDBTest {
     
     @Test
     @Order(16)
+    void testCheckpoint() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb16").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            // Insert some data
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 10; i++) {
+                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
+                }
+                txn.commit();
+            }
+            
+            // Create checkpoint
+            String checkpointDir = tempDir.resolve("testdb16_checkpoint").toString();
+            db.checkpoint(checkpointDir);
+            
+            // Open the checkpoint as a separate database and verify data
+            Config checkpointConfig = Config.builder(checkpointDir)
+                .numFlushThreads(2)
+                .numCompactionThreads(2)
+                .logLevel(LogLevel.INFO)
+                .blockCacheSize(64 * 1024 * 1024)
+                .maxOpenSSTables(256)
+                .build();
+            
+            try (TidesDB checkpointDb = TidesDB.open(checkpointConfig)) {
+                ColumnFamily checkpointCf = checkpointDb.getColumnFamily("test_cf");
+                assertNotNull(checkpointCf);
+                
+                try (Transaction txn = checkpointDb.beginTransaction()) {
+                    for (int i = 0; i < 10; i++) {
+                        byte[] result = txn.get(checkpointCf, ("key" + i).getBytes());
+                        assertNotNull(result);
+                        assertArrayEquals(("value" + i).getBytes(), result);
+                    }
+                }
+            }
+        }
+    }
+    
+    @Test
+    @Order(17)
+    void testCheckpointNullDir() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb16b").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            assertThrows(IllegalArgumentException.class, () -> db.checkpoint(null));
+            assertThrows(IllegalArgumentException.class, () -> db.checkpoint(""));
+        }
+    }
+    
+    @Test
+    @Order(18)
     void testTransactionPutGetDeleteBadKey() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb3").toString())
                 .numFlushThreads(2)
@@ -656,7 +726,7 @@ public class TidesDBTest {
     }
     
     @Test
-    @Order(17)
+    @Order(19)
     void testTransactionReset() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb17").toString())
             .numFlushThreads(2)
@@ -701,7 +771,7 @@ public class TidesDBTest {
     }
     
     @Test
-    @Order(18)
+    @Order(20)
     void testTransactionResetWithDifferentIsolation() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb18").toString())
             .numFlushThreads(2)
@@ -746,7 +816,7 @@ public class TidesDBTest {
     }
     
     @Test
-    @Order(19)
+    @Order(21)
     void testTransactionResetNullIsolation() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb19").toString())
             .numFlushThreads(2)
