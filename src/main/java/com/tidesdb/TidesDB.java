@@ -229,6 +229,21 @@ public class TidesDB implements Closeable {
     }
     
     /**
+     * Creates a lightweight, near-instant snapshot of an open database using hard links
+     * instead of copying SSTable data.
+     *
+     * @param dir the checkpoint directory (must be non-existent or empty)
+     * @throws TidesDBException if the checkpoint fails
+     */
+    public void checkpoint(String dir) throws TidesDBException {
+        checkNotClosed();
+        if (dir == null || dir.isEmpty()) {
+            throw new IllegalArgumentException("Checkpoint directory cannot be null or empty");
+        }
+        nativeCheckpoint(nativeHandle, dir);
+    }
+    
+    /**
      * Atomically renames a column family and its underlying directory.
      * The operation waits for any in-progress flush or compaction to complete before renaming.
      *
@@ -306,6 +321,8 @@ public class TidesDB implements Closeable {
     private static native void nativeRegisterComparator(long handle, String name, String context) throws TidesDBException;
     
     private static native void nativeBackup(long handle, String dir) throws TidesDBException;
+    
+    private static native void nativeCheckpoint(long handle, String dir) throws TidesDBException;
     
     private static native void nativeRenameColumnFamily(long handle, String oldName, String newName) throws TidesDBException;
     
