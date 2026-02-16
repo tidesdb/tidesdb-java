@@ -170,6 +170,10 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
         strncpy(config.comparator_name, compName, TDB_MAX_COMPARATOR_NAME - 1);
     }
 
+    memset(config.comparator_ctx_str, 0, TDB_MAX_COMPARATOR_CTX);
+    config.comparator_fn_cached = NULL;
+    config.comparator_ctx_cached = NULL;
+
     int result = tidesdb_create_column_family(db, cfName, &config);
 
     (*env)->ReleaseStringUTFChars(env, name, cfName);
