@@ -912,3 +912,32 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDBIterator_nativeFree(JNIEnv *env, 
         tidesdb_iter_free(iter);
     }
 }
+
+JNIEXPORT jdouble JNICALL Java_com_tidesdb_ColumnFamily_nativeRangeCost(JNIEnv *env, jclass cls,
+                                                                         jlong handle,
+                                                                         jbyteArray keyA,
+                                                                         jbyteArray keyB)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+
+    jsize keyALen = (*env)->GetArrayLength(env, keyA);
+    jsize keyBLen = (*env)->GetArrayLength(env, keyB);
+
+    jbyte *keyABytes = (*env)->GetByteArrayElements(env, keyA, NULL);
+    jbyte *keyBBytes = (*env)->GetByteArrayElements(env, keyB, NULL);
+
+    double cost = 0.0;
+    int result = tidesdb_range_cost(cf, (uint8_t *)keyABytes, keyALen, (uint8_t *)keyBBytes,
+                                    keyBLen, &cost);
+
+    (*env)->ReleaseByteArrayElements(env, keyA, keyABytes, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, keyB, keyBBytes, JNI_ABORT);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+        return 0.0;
+    }
+
+    return (jdouble)cost;
+}
