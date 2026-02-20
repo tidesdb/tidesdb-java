@@ -125,6 +125,27 @@ public class ColumnFamily {
             persistToDisk);
     }
     
+    /**
+     * Estimates the computational cost of iterating between two keys in this column family.
+     * The returned value is an opaque double — meaningful only for comparison with other
+     * values from the same method. Uses only in-memory metadata and performs no disk I/O.
+     * Key order does not matter — the method normalizes the range internally.
+     *
+     * @param keyA first key (bound of range)
+     * @param keyB second key (bound of range)
+     * @return estimated traversal cost (higher = more expensive), 0.0 if no overlapping data
+     * @throws TidesDBException if the estimation fails
+     */
+    public double rangeCost(byte[] keyA, byte[] keyB) throws TidesDBException {
+        if (keyA == null || keyA.length == 0) {
+            throw new IllegalArgumentException("keyA cannot be null or empty");
+        }
+        if (keyB == null || keyB.length == 0) {
+            throw new IllegalArgumentException("keyB cannot be null or empty");
+        }
+        return nativeRangeCost(nativeHandle, keyA, keyB);
+    }
+    
     long getNativeHandle() {
         return nativeHandle;
     }
@@ -137,4 +158,5 @@ public class ColumnFamily {
     private static native void nativeUpdateRuntimeConfig(long handle, long writeBufferSize,
         int skipListMaxLevel, float skipListProbability, double bloomFPR, int indexSampleRatio,
         int syncMode, long syncIntervalUs, boolean persistToDisk) throws TidesDBException;
+    private static native double nativeRangeCost(long handle, byte[] keyA, byte[] keyB) throws TidesDBException;
 }

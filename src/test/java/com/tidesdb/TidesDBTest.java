@@ -816,6 +816,100 @@ public class TidesDBTest {
     }
     
     @Test
+    @Order(22)
+    void testRangeCost() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb20").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            // Insert data
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 100; i++) {
+                    String key = String.format("key%04d", i);
+                    txn.put(cf, key.getBytes(), ("value" + i).getBytes());
+                }
+                txn.commit();
+            }
+            
+            // Estimate cost for a range
+            double cost = cf.rangeCost("key0000".getBytes(), "key0099".getBytes());
+            assertTrue(cost >= 0.0, "Range cost should be non-negative");
+        }
+    }
+    
+    @Test
+    @Order(23)
+    void testRangeCostComparison() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb21").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            // Insert data
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 1000; i++) {
+                    String key = String.format("key%04d", i);
+                    txn.put(cf, key.getBytes(), ("value" + i).getBytes());
+                }
+                txn.commit();
+            }
+            
+            // Both costs should be non-negative
+            double costSmall = cf.rangeCost("key0000".getBytes(), "key0010".getBytes());
+            double costLarge = cf.rangeCost("key0000".getBytes(), "key0999".getBytes());
+            assertTrue(costSmall >= 0.0, "Small range cost should be non-negative");
+            assertTrue(costLarge >= 0.0, "Large range cost should be non-negative");
+        }
+    }
+    
+    @Test
+    @Order(24)
+    void testRangeCostNullKeys() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb22").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            assertThrows(IllegalArgumentException.class,
+                () -> cf.rangeCost(null, "key".getBytes()));
+            assertThrows(IllegalArgumentException.class,
+                () -> cf.rangeCost("key".getBytes(), null));
+            assertThrows(IllegalArgumentException.class,
+                () -> cf.rangeCost(new byte[0], "key".getBytes()));
+            assertThrows(IllegalArgumentException.class,
+                () -> cf.rangeCost("key".getBytes(), new byte[0]));
+        }
+    }
+    
+    @Test
     @Order(21)
     void testTransactionResetNullIsolation() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb19").toString())
