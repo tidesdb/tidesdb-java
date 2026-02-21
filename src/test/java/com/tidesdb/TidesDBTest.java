@@ -24,6 +24,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -906,6 +909,158 @@ public class TidesDBTest {
                 () -> cf.rangeCost(new byte[0], "key".getBytes()));
             assertThrows(IllegalArgumentException.class,
                 () -> cf.rangeCost("key".getBytes(), new byte[0]));
+        }
+    }
+    
+    @Test
+    @Order(25)
+    void testCommitHookBasic() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb23").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            List<CommitOp[]> received = new ArrayList<>();
+            AtomicLong lastSeq = new AtomicLong();
+            
+            cf.setCommitHook((ops, commitSeq) -> {
+                received.add(ops);
+                lastSeq.set(commitSeq);
+                return 0;
+            });
+            
+            // Commit a put operation
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.commit();
+            }
+            
+            // Hook fires synchronously, so data is available immediately
+            assertEquals(1, received.size());
+            assertEquals(1, received.get(0).length);
+            assertArrayEquals("key1".getBytes(), received.get(0)[0].getKey());
+            assertArrayEquals("value1".getBytes(), received.get(0)[0].getValue());
+            assertFalse(received.get(0)[0].isDelete());
+            assertTrue(lastSeq.get() > 0);
+            
+            cf.clearCommitHook();
+        }
+    }
+    
+    @Test
+    @Order(26)
+    void testCommitHookMultipleOps() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb24").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            List<CommitOp[]> received = new ArrayList<>();
+            
+            cf.setCommitHook((ops, commitSeq) -> {
+                received.add(ops);
+                return 0;
+            });
+            
+            // Commit multiple operations in one transaction
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.put(cf, "key2".getBytes(), "value2".getBytes());
+                txn.delete(cf, "key1".getBytes());
+                txn.commit();
+            }
+            
+            // Should fire once with all operations
+            assertEquals(1, received.size());
+            assertEquals(3, received.get(0).length);
+            
+            // Last op should be a delete
+            assertTrue(received.get(0)[2].isDelete());
+            assertArrayEquals("key1".getBytes(), received.get(0)[2].getKey());
+            
+            cf.clearCommitHook();
+        }
+    }
+    
+    @Test
+    @Order(27)
+    void testCommitHookClear() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb25").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            List<CommitOp[]> received = new ArrayList<>();
+            
+            cf.setCommitHook((ops, commitSeq) -> {
+                received.add(ops);
+                return 0;
+            });
+            
+            // First commit — hook should fire
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.commit();
+            }
+            assertEquals(1, received.size());
+            
+            // Clear the hook
+            cf.clearCommitHook();
+            
+            // Second commit — hook should NOT fire
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key2".getBytes(), "value2".getBytes());
+                txn.commit();
+            }
+            assertEquals(1, received.size(), "Hook should not fire after clearing");
+        }
+    }
+    
+    @Test
+    @Order(28)
+    void testCommitHookNullThrows() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb26").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            assertThrows(IllegalArgumentException.class, () -> cf.setCommitHook(null));
         }
     }
     

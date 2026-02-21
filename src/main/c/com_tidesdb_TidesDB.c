@@ -913,6 +913,158 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDBIterator_nativeFree(JNIEnv *env, 
     }
 }
 
+/**
+ * Context stored as the commit hook ctx pointer.
+ * Holds the JavaVM and a global reference to the Java CommitHook object.
+ */
+typedef struct
+{
+    JavaVM *jvm;
+    jobject hook_obj; /* global reference to CommitHook */
+} java_hook_ctx_t;
+
+/**
+ * C trampoline that bridges the tidesdb_commit_hook_fn callback to the Java CommitHook.onCommit
+ * method. Fires synchronously on the committing thread (which is always a Java thread).
+ */
+static int java_commit_hook_trampoline(const tidesdb_commit_op_t *ops, int num_ops,
+                                        uint64_t commit_seq, void *ctx)
+{
+    java_hook_ctx_t *hctx = (java_hook_ctx_t *)ctx;
+    JNIEnv *env = NULL;
+    int need_detach = 0;
+
+    jint rc = (*hctx->jvm)->GetEnv(hctx->jvm, (void **)&env, JNI_VERSION_1_6);
+    if (rc == JNI_EDETACHED)
+    {
+        if ((*hctx->jvm)->AttachCurrentThread(hctx->jvm, (void **)&env, NULL) != 0)
+            return -1;
+        need_detach = 1;
+    }
+    else if (rc != JNI_OK)
+    {
+        return -1;
+    }
+
+    jint ret = -1;
+
+    /* Find CommitOp class and constructor: CommitOp(byte[], byte[], long, boolean) */
+    jclass commitOpClass = (*env)->FindClass(env, "com/tidesdb/CommitOp");
+    if (commitOpClass == NULL)
+        goto cleanup;
+
+    jmethodID ctor = (*env)->GetMethodID(env, commitOpClass, "<init>", "([B[BJZ)V");
+    if (ctor == NULL)
+        goto cleanup;
+
+    /* Create CommitOp[] array */
+    jobjectArray opsArray = (*env)->NewObjectArray(env, num_ops, commitOpClass, NULL);
+    if (opsArray == NULL)
+        goto cleanup;
+
+    for (int i = 0; i < num_ops; i++)
+    {
+        jbyteArray jkey = (*env)->NewByteArray(env, (jsize)ops[i].key_size);
+        (*env)->SetByteArrayRegion(env, jkey, 0, (jsize)ops[i].key_size, (jbyte *)ops[i].key);
+
+        jbyteArray jvalue = NULL;
+        if (ops[i].value != NULL && ops[i].value_size > 0)
+        {
+            jvalue = (*env)->NewByteArray(env, (jsize)ops[i].value_size);
+            (*env)->SetByteArrayRegion(env, jvalue, 0, (jsize)ops[i].value_size,
+                                       (jbyte *)ops[i].value);
+        }
+
+        jobject opObj = (*env)->NewObject(env, commitOpClass, ctor, jkey, jvalue,
+                                          (jlong)ops[i].ttl,
+                                          ops[i].is_delete ? JNI_TRUE : JNI_FALSE);
+        (*env)->SetObjectArrayElement(env, opsArray, i, opObj);
+
+        (*env)->DeleteLocalRef(env, opObj);
+        (*env)->DeleteLocalRef(env, jkey);
+        if (jvalue != NULL)
+            (*env)->DeleteLocalRef(env, jvalue);
+    }
+
+    /* Call CommitHook.onCommit(CommitOp[], long) */
+    jclass hookClass = (*env)->GetObjectClass(env, hctx->hook_obj);
+    jmethodID onCommit =
+        (*env)->GetMethodID(env, hookClass, "onCommit", "([Lcom/tidesdb/CommitOp;J)I");
+
+    ret = (*env)->CallIntMethod(env, hctx->hook_obj, onCommit, opsArray, (jlong)commit_seq);
+
+    if ((*env)->ExceptionCheck(env))
+    {
+        (*env)->ExceptionClear(env);
+        ret = -1;
+    }
+
+    (*env)->DeleteLocalRef(env, opsArray);
+    (*env)->DeleteLocalRef(env, commitOpClass);
+    (*env)->DeleteLocalRef(env, hookClass);
+
+    if (need_detach)
+        (*hctx->jvm)->DetachCurrentThread(hctx->jvm);
+
+    return (int)ret;
+
+cleanup:
+    if ((*env)->ExceptionCheck(env))
+        (*env)->ExceptionClear(env);
+    if (need_detach)
+        (*hctx->jvm)->DetachCurrentThread(hctx->jvm);
+    return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_com_tidesdb_ColumnFamily_nativeSetCommitHook(JNIEnv *env, jclass cls,
+                                                                           jlong cfHandle,
+                                                                           jobject hook,
+                                                                           jlong oldCtxHandle)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)cfHandle;
+
+    /* Free old context if present */
+    if (oldCtxHandle != 0)
+    {
+        java_hook_ctx_t *old_ctx = (java_hook_ctx_t *)(uintptr_t)oldCtxHandle;
+        (*env)->DeleteGlobalRef(env, old_ctx->hook_obj);
+        free(old_ctx);
+    }
+
+    /* If hook is NULL, clear the hook */
+    if (hook == NULL)
+    {
+        int result = tidesdb_cf_set_commit_hook(cf, NULL, NULL);
+        if (result != TDB_SUCCESS)
+        {
+            throwTidesDBException(env, result, getErrorMessage(result));
+        }
+        return 0;
+    }
+
+    /* Allocate new context */
+    java_hook_ctx_t *ctx = (java_hook_ctx_t *)malloc(sizeof(java_hook_ctx_t));
+    if (ctx == NULL)
+    {
+        throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to allocate commit hook context");
+        return 0;
+    }
+
+    (*env)->GetJavaVM(env, &ctx->jvm);
+    ctx->hook_obj = (*env)->NewGlobalRef(env, hook);
+
+    int result = tidesdb_cf_set_commit_hook(cf, java_commit_hook_trampoline, ctx);
+    if (result != TDB_SUCCESS)
+    {
+        (*env)->DeleteGlobalRef(env, ctx->hook_obj);
+        free(ctx);
+        throwTidesDBException(env, result, getErrorMessage(result));
+        return 0;
+    }
+
+    return (jlong)(uintptr_t)ctx;
+}
+
 JNIEXPORT jdouble JNICALL Java_com_tidesdb_ColumnFamily_nativeRangeCost(JNIEnv *env, jclass cls,
                                                                          jlong handle,
                                                                          jbyteArray keyA,
