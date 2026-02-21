@@ -30,6 +30,7 @@ public class ColumnFamily {
     
     private final long nativeHandle;
     private final String name;
+    private long commitHookCtxHandle = 0;
     
     ColumnFamily(long nativeHandle, String name) {
         this.nativeHandle = nativeHandle;
@@ -146,6 +147,35 @@ public class ColumnFamily {
         return nativeRangeCost(nativeHandle, keyA, keyB);
     }
     
+    /**
+     * Sets a commit hook (Change Data Capture) for this column family.
+     * The hook fires synchronously after every transaction commit, receiving the full
+     * batch of committed operations atomically. Keep the callback fast to avoid
+     * stalling writers.
+     *
+     * <p>Hooks are runtime-only and not persisted. After a database restart,
+     * hooks must be re-registered by the application.</p>
+     *
+     * @param hook the commit hook callback
+     * @throws TidesDBException if the hook cannot be set
+     */
+    public void setCommitHook(CommitHook hook) throws TidesDBException {
+        if (hook == null) {
+            throw new IllegalArgumentException("Hook cannot be null, use clearCommitHook() instead");
+        }
+        commitHookCtxHandle = nativeSetCommitHook(nativeHandle, hook, commitHookCtxHandle);
+    }
+    
+    /**
+     * Clears the commit hook for this column family.
+     * After this call, no further commit callbacks will fire.
+     *
+     * @throws TidesDBException if the hook cannot be cleared
+     */
+    public void clearCommitHook() throws TidesDBException {
+        commitHookCtxHandle = nativeSetCommitHook(nativeHandle, null, commitHookCtxHandle);
+    }
+    
     long getNativeHandle() {
         return nativeHandle;
     }
@@ -159,4 +189,5 @@ public class ColumnFamily {
         int skipListMaxLevel, float skipListProbability, double bloomFPR, int indexSampleRatio,
         int syncMode, long syncIntervalUs, boolean persistToDisk) throws TidesDBException;
     private static native double nativeRangeCost(long handle, byte[] keyA, byte[] keyB) throws TidesDBException;
+    private static native long nativeSetCommitHook(long handle, CommitHook hook, long oldCtxHandle) throws TidesDBException;
 }
