@@ -1065,6 +1065,78 @@ public class TidesDBTest {
     }
     
     @Test
+    @Order(29)
+    void testMaxMemoryUsageConfig() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb27").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .maxMemoryUsage(0)
+            .build();
+        
+        assertEquals(0, config.getMaxMemoryUsage());
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+            
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+            
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.commit();
+            }
+            
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] result = txn.get(cf, "key1".getBytes());
+                assertNotNull(result);
+                assertArrayEquals("value1".getBytes(), result);
+            }
+        }
+    }
+    
+    @Test
+    @Order(30)
+    void testMultiColumnFamilyTransaction() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb28").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+        
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("users", cfConfig);
+            db.createColumnFamily("orders", cfConfig);
+            
+            ColumnFamily usersCf = db.getColumnFamily("users");
+            ColumnFamily ordersCf = db.getColumnFamily("orders");
+            
+            // Atomic transaction across multiple column families
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(usersCf, "user:1000".getBytes(), "John Doe".getBytes());
+                txn.put(ordersCf, "order:5000".getBytes(), "user:1000|product:A".getBytes());
+                txn.commit();
+            }
+            
+            // Verify data in both column families
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] user = txn.get(usersCf, "user:1000".getBytes());
+                assertNotNull(user);
+                assertArrayEquals("John Doe".getBytes(), user);
+                
+                byte[] order = txn.get(ordersCf, "order:5000".getBytes());
+                assertNotNull(order);
+                assertArrayEquals("user:1000|product:A".getBytes(), order);
+            }
+        }
+    }
+    
+    @Test
     @Order(21)
     void testTransactionResetNullIsolation() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb19").toString())
