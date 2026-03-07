@@ -31,6 +31,7 @@ public class Config {
     private long maxOpenSSTables;
     private boolean logToFile;
     private long logTruncationAt;
+    private long maxMemoryUsage;
     
     private Config(Builder builder) {
         this.dbPath = builder.dbPath;
@@ -41,6 +42,7 @@ public class Config {
         this.maxOpenSSTables = builder.maxOpenSSTables;
         this.logToFile = builder.logToFile;
         this.logTruncationAt = builder.logTruncationAt;
+        this.maxMemoryUsage = builder.maxMemoryUsage;
     }
     
     /**
@@ -57,6 +59,7 @@ public class Config {
             .maxOpenSSTables(256)
             .logToFile(false)
             .logTruncationAt(24 * 1024 * 1024)
+            .maxMemoryUsage(0)
             .build();
     }
     
@@ -102,6 +105,10 @@ public class Config {
         return logTruncationAt;
     }
     
+    public long getMaxMemoryUsage() {
+        return maxMemoryUsage;
+    }
+    
     /**
      * Builder for Config.
      */
@@ -114,6 +121,7 @@ public class Config {
         private long maxOpenSSTables = 256;
         private boolean logToFile = false;
         private long logTruncationAt = 24 * 1024 * 1024;
+        private long maxMemoryUsage = 0;
         
         public Builder dbPath(String dbPath) {
             this.dbPath = dbPath;
@@ -152,6 +160,11 @@ public class Config {
         
         public Builder logTruncationAt(long logTruncationAt) {
             this.logTruncationAt = logTruncationAt;
+            return this;
+        }
+        
+        public Builder maxMemoryUsage(long maxMemoryUsage) {
+            this.maxMemoryUsage = maxMemoryUsage;
             return this;
         }
         
