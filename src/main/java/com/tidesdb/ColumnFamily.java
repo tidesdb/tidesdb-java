@@ -127,6 +127,27 @@ public class ColumnFamily {
     }
     
     /**
+     * Forces a synchronous flush and aggressive compaction for this column family.
+     * Unlike {@link #compact()} and {@link #flushMemtable()} (which are non-blocking),
+     * purge blocks until all flush and compaction I/O is complete.
+     *
+     * @throws TidesDBException if the purge fails
+     */
+    public void purge() throws TidesDBException {
+        nativePurge(nativeHandle);
+    }
+    
+    /**
+     * Forces an immediate fsync of the active write-ahead log for this column family.
+     * Useful for explicit durability control when using SYNC_NONE or SYNC_INTERVAL modes.
+     *
+     * @throws TidesDBException if the WAL sync fails
+     */
+    public void syncWal() throws TidesDBException {
+        nativeSyncWal(nativeHandle);
+    }
+    
+    /**
      * Estimates the computational cost of iterating between two keys in this column family.
      * The returned value is an opaque double — meaningful only for comparison with other
      * values from the same method. Uses only in-memory metadata and performs no disk I/O.
@@ -190,4 +211,6 @@ public class ColumnFamily {
         int syncMode, long syncIntervalUs, boolean persistToDisk) throws TidesDBException;
     private static native double nativeRangeCost(long handle, byte[] keyA, byte[] keyB) throws TidesDBException;
     private static native long nativeSetCommitHook(long handle, CommitHook hook, long oldCtxHandle) throws TidesDBException;
+    private static native void nativePurge(long handle) throws TidesDBException;
+    private static native void nativeSyncWal(long handle) throws TidesDBException;
 }

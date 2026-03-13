@@ -6,7 +6,7 @@
 
     <groupId>com.tidesdb</groupId>
     <artifactId>tidesdb-java</artifactId>
-    <version>0.6.5</version>
+    <version>0.6.6</version>
     <packaging>jar</packaging>
 
     <name>TidesDB Java</name>
