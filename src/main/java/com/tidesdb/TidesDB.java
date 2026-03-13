@@ -283,6 +283,29 @@ public class TidesDB implements Closeable {
         nativeCloneColumnFamily(nativeHandle, sourceName, destName);
     }
     
+    /**
+     * Forces a synchronous flush and aggressive compaction for all column families,
+     * then drains both the global flush and compaction queues.
+     * This blocks until all work is complete.
+     *
+     * @throws TidesDBException if the purge fails
+     */
+    public void purge() throws TidesDBException {
+        checkNotClosed();
+        nativePurge(nativeHandle);
+    }
+    
+    /**
+     * Retrieves aggregate statistics across the entire database instance.
+     *
+     * @return database-level statistics
+     * @throws TidesDBException if the stats cannot be retrieved
+     */
+    public DbStats getDbStats() throws TidesDBException {
+        checkNotClosed();
+        return nativeGetDbStats(nativeHandle);
+    }
+    
     private void checkNotClosed() {
         if (closed) {
             throw new IllegalStateException("TidesDB instance is closed");
@@ -329,4 +352,8 @@ public class TidesDB implements Closeable {
     private static native void nativeRenameColumnFamily(long handle, String oldName, String newName) throws TidesDBException;
     
     private static native void nativeCloneColumnFamily(long handle, String sourceName, String destName) throws TidesDBException;
+    
+    private static native void nativePurge(long handle) throws TidesDBException;
+    
+    private static native DbStats nativeGetDbStats(long handle) throws TidesDBException;
 }

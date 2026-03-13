@@ -1067,6 +1067,76 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_ColumnFamily_nativeSetCommitHook(JNIEnv
     return (jlong)(uintptr_t)ctx;
 }
 
+JNIEXPORT void JNICALL Java_com_tidesdb_ColumnFamily_nativePurge(JNIEnv *env, jclass cls,
+                                                                  jlong handle)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+    int result = tidesdb_purge_cf(cf);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_tidesdb_ColumnFamily_nativeSyncWal(JNIEnv *env, jclass cls,
+                                                                    jlong handle)
+{
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)handle;
+    int result = tidesdb_sync_wal(cf);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativePurge(JNIEnv *env, jclass cls, jlong handle)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    int result = tidesdb_purge(db);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT jobject JNICALL Java_com_tidesdb_TidesDB_nativeGetDbStats(JNIEnv *env, jclass cls,
+                                                                     jlong handle)
+{
+    tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
+    tidesdb_db_stats_t db_stats;
+
+    int result = tidesdb_get_db_stats(db, &db_stats);
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+        return NULL;
+    }
+
+    jclass dbStatsClass = (*env)->FindClass(env, "com/tidesdb/DbStats");
+    jmethodID constructor =
+        (*env)->GetMethodID(env, dbStatsClass, "<init>", "(IJJJIIJIIJIJJJJ)V");
+
+    return (*env)->NewObject(env, dbStatsClass, constructor,
+                             (jint)db_stats.num_column_families,
+                             (jlong)db_stats.total_memory,
+                             (jlong)db_stats.available_memory,
+                             (jlong)db_stats.resolved_memory_limit,
+                             (jint)db_stats.memory_pressure_level,
+                             (jint)db_stats.flush_pending_count,
+                             (jlong)db_stats.total_memtable_bytes,
+                             (jint)db_stats.total_immutable_count,
+                             (jint)db_stats.total_sstable_count,
+                             (jlong)db_stats.total_data_size_bytes,
+                             (jint)db_stats.num_open_sstables,
+                             (jlong)db_stats.global_seq,
+                             (jlong)db_stats.txn_memory_bytes,
+                             (jlong)db_stats.compaction_queue_size,
+                             (jlong)db_stats.flush_queue_size);
+}
+
 JNIEXPORT jdouble JNICALL Java_com_tidesdb_ColumnFamily_nativeRangeCost(JNIEnv *env, jclass cls,
                                                                          jlong handle,
                                                                          jbyteArray keyA,
