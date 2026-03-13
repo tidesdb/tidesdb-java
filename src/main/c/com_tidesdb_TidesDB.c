@@ -1117,7 +1117,7 @@ JNIEXPORT jobject JNICALL Java_com_tidesdb_TidesDB_nativeGetDbStats(JNIEnv *env,
 
     jclass dbStatsClass = (*env)->FindClass(env, "com/tidesdb/DbStats");
     jmethodID constructor =
-        (*env)->GetMethodID(env, dbStatsClass, "<init>", "(IJJJIIJIIJIIJJJJ)V");
+        (*env)->GetMethodID(env, dbStatsClass, "<init>", "(IJJJIIJIIJIJJJJ)V");
 
     return (*env)->NewObject(env, dbStatsClass, constructor,
                              (jint)db_stats.num_column_families,
