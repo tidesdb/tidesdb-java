@@ -19,32 +19,33 @@
 package com.tidesdb;
 
 /**
- * Logging level for TidesDB.
+ * A key-value pair returned by the combined iterator retrieval method.
  */
-public enum LogLevel {
-    DEBUG(0),
-    INFO(1),
-    WARN(2),
-    ERROR(3),
-    FATAL(4),
-    NONE(99);
-    
-    private final int value;
-    
-    LogLevel(int value) {
+public class KeyValue {
+
+    private final byte[] key;
+    private final byte[] value;
+
+    public KeyValue(byte[] key, byte[] value) {
+        this.key = key;
         this.value = value;
     }
-    
-    public int getValue() {
-        return value;
+
+    /**
+     * Gets the key bytes.
+     *
+     * @return the key
+     */
+    public byte[] getKey() {
+        return key;
     }
-    
-    public static LogLevel fromValue(int value) {
-        for (LogLevel level : values()) {
-            if (level.value == value) {
-                return level;
-            }
-        }
-        throw new IllegalArgumentException("Unknown log level value: " + value);
+
+    /**
+     * Gets the value bytes.
+     *
+     * @return the value
+     */
+    public byte[] getValue() {
+        return value;
     }
 }

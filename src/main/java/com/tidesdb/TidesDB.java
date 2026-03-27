@@ -61,7 +61,13 @@ public class TidesDB implements Closeable {
             config.getMaxOpenSSTables(),
             config.isLogToFile(),
             config.getLogTruncationAt(),
-            config.getMaxMemoryUsage()
+            config.getMaxMemoryUsage(),
+            config.isUnifiedMemtable(),
+            config.getUnifiedMemtableWriteBufferSize(),
+            config.getUnifiedMemtableSkipListMaxLevel(),
+            config.getUnifiedMemtableSkipListProbability(),
+            config.getUnifiedMemtableSyncMode(),
+            config.getUnifiedMemtableSyncIntervalUs()
         );
         
         return new TidesDB(handle);
@@ -296,6 +302,32 @@ public class TidesDB implements Closeable {
     }
     
     /**
+     * Deletes a column family using its handle.
+     * This is an alternative to {@link #dropColumnFamily(String)} that takes a column family
+     * object instead of a name.
+     *
+     * @param cf the column family to delete
+     * @throws TidesDBException if the column family cannot be deleted
+     */
+    public void deleteColumnFamily(ColumnFamily cf) throws TidesDBException {
+        checkNotClosed();
+        if (cf == null) {
+            throw new IllegalArgumentException("Column family cannot be null");
+        }
+        nativeDeleteColumnFamily(nativeHandle, cf.getNativeHandle());
+    }
+
+    /**
+     * Switches a read-only replica database to primary mode.
+     *
+     * @throws TidesDBException if not in replica mode or promotion fails
+     */
+    public void promoteToPrimary() throws TidesDBException {
+        checkNotClosed();
+        nativePromoteToPrimary(nativeHandle);
+    }
+
+    /**
      * Retrieves aggregate statistics across the entire database instance.
      *
      * @return database-level statistics
@@ -319,7 +351,12 @@ public class TidesDB implements Closeable {
     private static native long nativeOpen(String dbPath, int numFlushThreads, int numCompactionThreads,
                                           int logLevel, long blockCacheSize, long maxOpenSSTables,
                                           boolean logToFile, long logTruncationAt,
-                                          long maxMemoryUsage) throws TidesDBException;
+                                          long maxMemoryUsage, boolean unifiedMemtable,
+                                          long unifiedMemtableWriteBufferSize,
+                                          int unifiedMemtableSkipListMaxLevel,
+                                          float unifiedMemtableSkipListProbability,
+                                          int unifiedMemtableSyncMode,
+                                          long unifiedMemtableSyncIntervalUs) throws TidesDBException;
     
     private static native void nativeClose(long handle);
     
@@ -354,6 +391,10 @@ public class TidesDB implements Closeable {
     private static native void nativeCloneColumnFamily(long handle, String sourceName, String destName) throws TidesDBException;
     
     private static native void nativePurge(long handle) throws TidesDBException;
-    
+
     private static native DbStats nativeGetDbStats(long handle) throws TidesDBException;
+
+    private static native void nativeDeleteColumnFamily(long handle, long cfHandle) throws TidesDBException;
+
+    private static native void nativePromoteToPrimary(long handle) throws TidesDBException;
 }

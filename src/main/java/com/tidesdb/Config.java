@@ -32,7 +32,13 @@ public class Config {
     private boolean logToFile;
     private long logTruncationAt;
     private long maxMemoryUsage;
-    
+    private boolean unifiedMemtable;
+    private long unifiedMemtableWriteBufferSize;
+    private int unifiedMemtableSkipListMaxLevel;
+    private float unifiedMemtableSkipListProbability;
+    private int unifiedMemtableSyncMode;
+    private long unifiedMemtableSyncIntervalUs;
+
     private Config(Builder builder) {
         this.dbPath = builder.dbPath;
         this.numFlushThreads = builder.numFlushThreads;
@@ -43,6 +49,12 @@ public class Config {
         this.logToFile = builder.logToFile;
         this.logTruncationAt = builder.logTruncationAt;
         this.maxMemoryUsage = builder.maxMemoryUsage;
+        this.unifiedMemtable = builder.unifiedMemtable;
+        this.unifiedMemtableWriteBufferSize = builder.unifiedMemtableWriteBufferSize;
+        this.unifiedMemtableSkipListMaxLevel = builder.unifiedMemtableSkipListMaxLevel;
+        this.unifiedMemtableSkipListProbability = builder.unifiedMemtableSkipListProbability;
+        this.unifiedMemtableSyncMode = builder.unifiedMemtableSyncMode;
+        this.unifiedMemtableSyncIntervalUs = builder.unifiedMemtableSyncIntervalUs;
     }
     
     /**
@@ -108,7 +120,31 @@ public class Config {
     public long getMaxMemoryUsage() {
         return maxMemoryUsage;
     }
-    
+
+    public boolean isUnifiedMemtable() {
+        return unifiedMemtable;
+    }
+
+    public long getUnifiedMemtableWriteBufferSize() {
+        return unifiedMemtableWriteBufferSize;
+    }
+
+    public int getUnifiedMemtableSkipListMaxLevel() {
+        return unifiedMemtableSkipListMaxLevel;
+    }
+
+    public float getUnifiedMemtableSkipListProbability() {
+        return unifiedMemtableSkipListProbability;
+    }
+
+    public int getUnifiedMemtableSyncMode() {
+        return unifiedMemtableSyncMode;
+    }
+
+    public long getUnifiedMemtableSyncIntervalUs() {
+        return unifiedMemtableSyncIntervalUs;
+    }
+
     /**
      * Builder for Config.
      */
@@ -122,7 +158,13 @@ public class Config {
         private boolean logToFile = false;
         private long logTruncationAt = 24 * 1024 * 1024;
         private long maxMemoryUsage = 0;
-        
+        private boolean unifiedMemtable = false;
+        private long unifiedMemtableWriteBufferSize = 0;
+        private int unifiedMemtableSkipListMaxLevel = 0;
+        private float unifiedMemtableSkipListProbability = 0;
+        private int unifiedMemtableSyncMode = 0;
+        private long unifiedMemtableSyncIntervalUs = 0;
+
         public Builder dbPath(String dbPath) {
             this.dbPath = dbPath;
             return this;
@@ -167,7 +209,37 @@ public class Config {
             this.maxMemoryUsage = maxMemoryUsage;
             return this;
         }
-        
+
+        public Builder unifiedMemtable(boolean unifiedMemtable) {
+            this.unifiedMemtable = unifiedMemtable;
+            return this;
+        }
+
+        public Builder unifiedMemtableWriteBufferSize(long unifiedMemtableWriteBufferSize) {
+            this.unifiedMemtableWriteBufferSize = unifiedMemtableWriteBufferSize;
+            return this;
+        }
+
+        public Builder unifiedMemtableSkipListMaxLevel(int unifiedMemtableSkipListMaxLevel) {
+            this.unifiedMemtableSkipListMaxLevel = unifiedMemtableSkipListMaxLevel;
+            return this;
+        }
+
+        public Builder unifiedMemtableSkipListProbability(float unifiedMemtableSkipListProbability) {
+            this.unifiedMemtableSkipListProbability = unifiedMemtableSkipListProbability;
+            return this;
+        }
+
+        public Builder unifiedMemtableSyncMode(int unifiedMemtableSyncMode) {
+            this.unifiedMemtableSyncMode = unifiedMemtableSyncMode;
+            return this;
+        }
+
+        public Builder unifiedMemtableSyncIntervalUs(long unifiedMemtableSyncIntervalUs) {
+            this.unifiedMemtableSyncIntervalUs = unifiedMemtableSyncIntervalUs;
+            return this;
+        }
+
         public Config build() {
             validate();
             return new Config(this);
