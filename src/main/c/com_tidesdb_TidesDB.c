@@ -81,7 +81,12 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDB_nativeOpen(
     jlong logTruncationAt, jlong maxMemoryUsage, jboolean unifiedMemtable,
     jlong unifiedMemtableWriteBufferSize, jint unifiedMemtableSkipListMaxLevel,
     jfloat unifiedMemtableSkipListProbability, jint unifiedMemtableSyncMode,
-    jlong unifiedMemtableSyncIntervalUs)
+    jlong unifiedMemtableSyncIntervalUs, jstring objectStoreFsPath, jstring oscLocalCachePath,
+    jlong oscLocalCacheMaxBytes, jboolean oscCacheOnRead, jboolean oscCacheOnWrite,
+    jint oscMaxConcurrentUploads, jint oscMaxConcurrentDownloads, jlong oscMultipartThreshold,
+    jlong oscMultipartPartSize, jboolean oscSyncManifestToObject, jboolean oscReplicateWal,
+    jboolean oscWalUploadSync, jlong oscWalSyncThresholdBytes, jboolean oscWalSyncOnCommit,
+    jboolean oscReplicaMode, jlong oscReplicaSyncIntervalUs, jboolean oscReplicaReplayWal)
 {
     const char *path = (*env)->GetStringUTFChars(env, dbPath, NULL);
     if (path == NULL)
@@ -89,6 +94,43 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDB_nativeOpen(
         throwTidesDBException(env, TDB_ERR_MEMORY, "Failed to get database path");
         return 0;
     }
+
+    /* object store connector (filesystem) */
+    tidesdb_objstore_t *obj_store = NULL;
+    const char *fs_path = NULL;
+    if (objectStoreFsPath != NULL)
+    {
+        fs_path = (*env)->GetStringUTFChars(env, objectStoreFsPath, NULL);
+        if (fs_path != NULL)
+        {
+            obj_store = tidesdb_objstore_fs_create(fs_path);
+        }
+    }
+
+    /* object store behavior config */
+    const char *cache_path = NULL;
+    if (oscLocalCachePath != NULL)
+    {
+        cache_path = (*env)->GetStringUTFChars(env, oscLocalCachePath, NULL);
+    }
+
+    tidesdb_objstore_config_t os_cfg = {
+        .local_cache_path = cache_path,
+        .local_cache_max_bytes = (size_t)oscLocalCacheMaxBytes,
+        .cache_on_read = oscCacheOnRead ? 1 : 0,
+        .cache_on_write = oscCacheOnWrite ? 1 : 0,
+        .max_concurrent_uploads = oscMaxConcurrentUploads,
+        .max_concurrent_downloads = oscMaxConcurrentDownloads,
+        .multipart_threshold = (size_t)oscMultipartThreshold,
+        .multipart_part_size = (size_t)oscMultipartPartSize,
+        .sync_manifest_to_object = oscSyncManifestToObject ? 1 : 0,
+        .replicate_wal = oscReplicateWal ? 1 : 0,
+        .wal_upload_sync = oscWalUploadSync ? 1 : 0,
+        .wal_sync_threshold_bytes = (size_t)oscWalSyncThresholdBytes,
+        .wal_sync_on_commit = oscWalSyncOnCommit ? 1 : 0,
+        .replica_mode = oscReplicaMode ? 1 : 0,
+        .replica_sync_interval_us = (uint64_t)oscReplicaSyncIntervalUs,
+        .replica_replay_wal = oscReplicaReplayWal ? 1 : 0};
 
     tidesdb_config_t config = {
         .db_path = (char *)path,
@@ -105,12 +147,22 @@ JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDB_nativeOpen(
         .unified_memtable_skip_list_max_level = unifiedMemtableSkipListMaxLevel,
         .unified_memtable_skip_list_probability = unifiedMemtableSkipListProbability,
         .unified_memtable_sync_mode = unifiedMemtableSyncMode,
-        .unified_memtable_sync_interval_us = (uint64_t)unifiedMemtableSyncIntervalUs};
+        .unified_memtable_sync_interval_us = (uint64_t)unifiedMemtableSyncIntervalUs,
+        .object_store = obj_store,
+        .object_store_config = obj_store != NULL ? &os_cfg : NULL};
 
     tidesdb_t *db = NULL;
     int result = tidesdb_open(&config, &db);
 
     (*env)->ReleaseStringUTFChars(env, dbPath, path);
+    if (fs_path != NULL)
+    {
+        (*env)->ReleaseStringUTFChars(env, objectStoreFsPath, fs_path);
+    }
+    if (cache_path != NULL)
+    {
+        (*env)->ReleaseStringUTFChars(env, oscLocalCachePath, cache_path);
+    }
 
     if (result != TDB_SUCCESS)
     {
@@ -137,7 +189,8 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
     jboolean enableBlockIndexes, jint indexSampleRatio, jint blockIndexPrefixLen, jint syncMode,
     jlong syncIntervalUs, jstring comparatorName, jint skipListMaxLevel, jfloat skipListProbability,
     jint defaultIsolationLevel, jlong minDiskSpace, jint l1FileCountTrigger,
-    jint l0QueueStallThreshold, jboolean useBtree)
+    jint l0QueueStallThreshold, jboolean useBtree, jlong objectTargetFileSize,
+    jboolean objectLazyCompaction, jboolean objectPrefetchCompaction)
 {
     tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
     const char *cfName = (*env)->GetStringUTFChars(env, name, NULL);
@@ -173,7 +226,10 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
         .min_disk_space = (uint64_t)minDiskSpace,
         .l1_file_count_trigger = l1FileCountTrigger,
         .l0_queue_stall_threshold = l0QueueStallThreshold,
-        .use_btree = useBtree ? 1 : 0};
+        .use_btree = useBtree ? 1 : 0,
+        .object_target_file_size = (size_t)objectTargetFileSize,
+        .object_lazy_compaction = objectLazyCompaction ? 1 : 0,
+        .object_prefetch_compaction = objectPrefetchCompaction ? 1 : 0};
 
     memset(config.comparator_name, 0, TDB_MAX_COMPARATOR_NAME);
     if (compName != NULL && strlen(compName) > 0)

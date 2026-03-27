@@ -38,6 +38,8 @@ public class Config {
     private float unifiedMemtableSkipListProbability;
     private int unifiedMemtableSyncMode;
     private long unifiedMemtableSyncIntervalUs;
+    private String objectStoreFsPath;
+    private ObjectStoreConfig objectStoreConfig;
 
     private Config(Builder builder) {
         this.dbPath = builder.dbPath;
@@ -55,6 +57,8 @@ public class Config {
         this.unifiedMemtableSkipListProbability = builder.unifiedMemtableSkipListProbability;
         this.unifiedMemtableSyncMode = builder.unifiedMemtableSyncMode;
         this.unifiedMemtableSyncIntervalUs = builder.unifiedMemtableSyncIntervalUs;
+        this.objectStoreFsPath = builder.objectStoreFsPath;
+        this.objectStoreConfig = builder.objectStoreConfig;
     }
     
     /**
@@ -145,6 +149,14 @@ public class Config {
         return unifiedMemtableSyncIntervalUs;
     }
 
+    public String getObjectStoreFsPath() {
+        return objectStoreFsPath;
+    }
+
+    public ObjectStoreConfig getObjectStoreConfig() {
+        return objectStoreConfig;
+    }
+
     /**
      * Builder for Config.
      */
@@ -164,6 +176,8 @@ public class Config {
         private float unifiedMemtableSkipListProbability = 0;
         private int unifiedMemtableSyncMode = 0;
         private long unifiedMemtableSyncIntervalUs = 0;
+        private String objectStoreFsPath = null;
+        private ObjectStoreConfig objectStoreConfig = null;
 
         public Builder dbPath(String dbPath) {
             this.dbPath = dbPath;
@@ -237,6 +251,16 @@ public class Config {
 
         public Builder unifiedMemtableSyncIntervalUs(long unifiedMemtableSyncIntervalUs) {
             this.unifiedMemtableSyncIntervalUs = unifiedMemtableSyncIntervalUs;
+            return this;
+        }
+
+        public Builder objectStoreFsPath(String objectStoreFsPath) {
+            this.objectStoreFsPath = objectStoreFsPath;
+            return this;
+        }
+
+        public Builder objectStoreConfig(ObjectStoreConfig objectStoreConfig) {
+            this.objectStoreConfig = objectStoreConfig;
             return this;
         }
 

@@ -52,6 +52,8 @@ public class TidesDB implements Closeable {
             throw new IllegalArgumentException("Database path cannot be null or empty");
         }
         
+        ObjectStoreConfig osc = config.getObjectStoreConfig();
+
         long handle = nativeOpen(
             config.getDbPath(),
             config.getNumFlushThreads(),
@@ -67,7 +69,24 @@ public class TidesDB implements Closeable {
             config.getUnifiedMemtableSkipListMaxLevel(),
             config.getUnifiedMemtableSkipListProbability(),
             config.getUnifiedMemtableSyncMode(),
-            config.getUnifiedMemtableSyncIntervalUs()
+            config.getUnifiedMemtableSyncIntervalUs(),
+            config.getObjectStoreFsPath(),
+            osc != null ? osc.getLocalCachePath() : null,
+            osc != null ? osc.getLocalCacheMaxBytes() : 0,
+            osc != null ? osc.isCacheOnRead() : true,
+            osc != null ? osc.isCacheOnWrite() : true,
+            osc != null ? osc.getMaxConcurrentUploads() : 4,
+            osc != null ? osc.getMaxConcurrentDownloads() : 8,
+            osc != null ? osc.getMultipartThreshold() : 64 * 1024 * 1024,
+            osc != null ? osc.getMultipartPartSize() : 8 * 1024 * 1024,
+            osc != null ? osc.isSyncManifestToObject() : true,
+            osc != null ? osc.isReplicateWal() : true,
+            osc != null ? osc.isWalUploadSync() : false,
+            osc != null ? osc.getWalSyncThresholdBytes() : 1048576,
+            osc != null ? osc.isWalSyncOnCommit() : false,
+            osc != null ? osc.isReplicaMode() : false,
+            osc != null ? osc.getReplicaSyncIntervalUs() : 5000000,
+            osc != null ? osc.isReplicaReplayWal() : true
         );
         
         return new TidesDB(handle);
@@ -122,7 +141,10 @@ public class TidesDB implements Closeable {
             config.getMinDiskSpace(),
             config.getL1FileCountTrigger(),
             config.getL0QueueStallThreshold(),
-            config.isUseBtree()
+            config.isUseBtree(),
+            config.getObjectTargetFileSize(),
+            config.isObjectLazyCompaction(),
+            config.isObjectPrefetchCompaction()
         );
     }
     
@@ -356,7 +378,17 @@ public class TidesDB implements Closeable {
                                           int unifiedMemtableSkipListMaxLevel,
                                           float unifiedMemtableSkipListProbability,
                                           int unifiedMemtableSyncMode,
-                                          long unifiedMemtableSyncIntervalUs) throws TidesDBException;
+                                          long unifiedMemtableSyncIntervalUs,
+                                          String objectStoreFsPath,
+                                          String oscLocalCachePath, long oscLocalCacheMaxBytes,
+                                          boolean oscCacheOnRead, boolean oscCacheOnWrite,
+                                          int oscMaxConcurrentUploads, int oscMaxConcurrentDownloads,
+                                          long oscMultipartThreshold, long oscMultipartPartSize,
+                                          boolean oscSyncManifestToObject, boolean oscReplicateWal,
+                                          boolean oscWalUploadSync, long oscWalSyncThresholdBytes,
+                                          boolean oscWalSyncOnCommit, boolean oscReplicaMode,
+                                          long oscReplicaSyncIntervalUs,
+                                          boolean oscReplicaReplayWal) throws TidesDBException;
     
     private static native void nativeClose(long handle);
     
@@ -366,7 +398,9 @@ public class TidesDB implements Closeable {
         double bloomFPR, boolean enableBlockIndexes, int indexSampleRatio, int blockIndexPrefixLen,
         int syncMode, long syncIntervalUs, String comparatorName, int skipListMaxLevel,
         float skipListProbability, int defaultIsolationLevel, long minDiskSpace,
-        int l1FileCountTrigger, int l0QueueStallThreshold, boolean useBtree) throws TidesDBException;
+        int l1FileCountTrigger, int l0QueueStallThreshold, boolean useBtree,
+        long objectTargetFileSize, boolean objectLazyCompaction,
+        boolean objectPrefetchCompaction) throws TidesDBException;
     
     private static native void nativeDropColumnFamily(long handle, String name) throws TidesDBException;
     
