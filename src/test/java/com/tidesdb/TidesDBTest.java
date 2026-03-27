@@ -1317,6 +1317,185 @@ public class TidesDBTest {
     }
     
     @Test
+    @Order(36)
+    void testUnifiedMemtableConfig() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_unified").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .unifiedMemtable(true)
+            .unifiedMemtableWriteBufferSize(0)
+            .unifiedMemtableSkipListMaxLevel(0)
+            .unifiedMemtableSkipListProbability(0)
+            .unifiedMemtableSyncMode(0)
+            .unifiedMemtableSyncIntervalUs(0)
+            .build();
+
+        assertTrue(config.isUnifiedMemtable());
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.commit();
+            }
+
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] result = txn.get(cf, "key1".getBytes());
+                assertNotNull(result);
+                assertArrayEquals("value1".getBytes(), result);
+            }
+
+            DbStats dbStats = db.getDbStats();
+            assertNotNull(dbStats);
+            assertTrue(dbStats.isUnifiedMemtableEnabled());
+        }
+    }
+
+    @Test
+    @Order(37)
+    void testDeleteColumnFamily() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_delcf").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("delete_me", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("delete_me");
+            assertNotNull(cf);
+
+            // Insert some data first
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "key1".getBytes(), "value1".getBytes());
+                txn.commit();
+            }
+
+            // Delete the column family via handle
+            db.deleteColumnFamily(cf);
+
+            // Verify it's gone
+            assertThrows(TidesDBException.class, () -> db.getColumnFamily("delete_me"));
+        }
+    }
+
+    @Test
+    @Order(38)
+    void testDeleteColumnFamilyNull() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_delcf_null").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            assertThrows(IllegalArgumentException.class, () -> db.deleteColumnFamily(null));
+        }
+    }
+
+    @Test
+    @Order(39)
+    void testIteratorKeyValue() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_kv").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < 10; i++) {
+                    String key = String.format("key%02d", i);
+                    String value = "value" + i;
+                    txn.put(cf, key.getBytes(), value.getBytes());
+                }
+                txn.commit();
+            }
+
+            // Test combined keyValue() method
+            try (Transaction txn = db.beginTransaction()) {
+                try (TidesDBIterator iter = txn.newIterator(cf)) {
+                    iter.seekToFirst();
+
+                    int count = 0;
+                    while (iter.isValid()) {
+                        KeyValue kv = iter.keyValue();
+                        assertNotNull(kv);
+                        assertNotNull(kv.getKey());
+                        assertNotNull(kv.getValue());
+                        count++;
+                        iter.next();
+                    }
+                    assertEquals(10, count);
+                }
+            }
+        }
+    }
+
+    @Test
+    @Order(40)
+    void testDbStatsUnifiedFields() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_stats_unified").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            DbStats dbStats = db.getDbStats();
+            assertNotNull(dbStats);
+
+            // With default config, unified memtable should be disabled
+            assertFalse(dbStats.isUnifiedMemtableEnabled());
+            assertFalse(dbStats.isObjectStoreEnabled());
+            assertFalse(dbStats.isReplicaMode());
+            assertTrue(dbStats.getUnifiedMemtableBytes() >= 0);
+            assertTrue(dbStats.getUnifiedImmutableCount() >= 0);
+            assertTrue(dbStats.getLocalCacheBytesUsed() >= 0);
+            assertTrue(dbStats.getTotalUploads() >= 0);
+            assertTrue(dbStats.getTotalUploadFailures() >= 0);
+
+            // Verify toString includes new fields
+            String str = dbStats.toString();
+            assertTrue(str.contains("unifiedMemtableEnabled="));
+            assertTrue(str.contains("objectStoreEnabled="));
+            assertTrue(str.contains("replicaMode="));
+        }
+    }
+
+    @Test
+    @Order(41)
+    void testLogLevelNoneValue() {
+        assertEquals(99, LogLevel.NONE.getValue());
+        assertEquals(LogLevel.NONE, LogLevel.fromValue(99));
+    }
+
+    @Test
     @Order(21)
     void testTransactionResetNullIsolation() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb19").toString())

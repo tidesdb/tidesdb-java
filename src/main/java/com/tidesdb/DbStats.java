@@ -22,7 +22,7 @@ package com.tidesdb;
  * Database-level aggregate statistics across the entire TidesDB instance.
  */
 public class DbStats {
-    
+
     private final int numColumnFamilies;
     private final long totalMemory;
     private final long availableMemory;
@@ -38,12 +38,35 @@ public class DbStats {
     private final long txnMemoryBytes;
     private final long compactionQueueSize;
     private final long flushQueueSize;
-    
+    private final boolean unifiedMemtableEnabled;
+    private final long unifiedMemtableBytes;
+    private final int unifiedImmutableCount;
+    private final boolean unifiedIsFlushing;
+    private final int unifiedNextCfIndex;
+    private final long unifiedWalGeneration;
+    private final boolean objectStoreEnabled;
+    private final String objectStoreConnector;
+    private final long localCacheBytesUsed;
+    private final long localCacheBytesMax;
+    private final int localCacheNumFiles;
+    private final long lastUploadedGeneration;
+    private final long uploadQueueDepth;
+    private final long totalUploads;
+    private final long totalUploadFailures;
+    private final boolean replicaMode;
+
     public DbStats(int numColumnFamilies, long totalMemory, long availableMemory,
                    long resolvedMemoryLimit, int memoryPressureLevel, int flushPendingCount,
                    long totalMemtableBytes, int totalImmutableCount, int totalSstableCount,
                    long totalDataSizeBytes, int numOpenSstables, long globalSeq,
-                   long txnMemoryBytes, long compactionQueueSize, long flushQueueSize) {
+                   long txnMemoryBytes, long compactionQueueSize, long flushQueueSize,
+                   boolean unifiedMemtableEnabled, long unifiedMemtableBytes,
+                   int unifiedImmutableCount, boolean unifiedIsFlushing,
+                   int unifiedNextCfIndex, long unifiedWalGeneration,
+                   boolean objectStoreEnabled, String objectStoreConnector,
+                   long localCacheBytesUsed, long localCacheBytesMax, int localCacheNumFiles,
+                   long lastUploadedGeneration, long uploadQueueDepth,
+                   long totalUploads, long totalUploadFailures, boolean replicaMode) {
         this.numColumnFamilies = numColumnFamilies;
         this.totalMemory = totalMemory;
         this.availableMemory = availableMemory;
@@ -59,144 +82,148 @@ public class DbStats {
         this.txnMemoryBytes = txnMemoryBytes;
         this.compactionQueueSize = compactionQueueSize;
         this.flushQueueSize = flushQueueSize;
+        this.unifiedMemtableEnabled = unifiedMemtableEnabled;
+        this.unifiedMemtableBytes = unifiedMemtableBytes;
+        this.unifiedImmutableCount = unifiedImmutableCount;
+        this.unifiedIsFlushing = unifiedIsFlushing;
+        this.unifiedNextCfIndex = unifiedNextCfIndex;
+        this.unifiedWalGeneration = unifiedWalGeneration;
+        this.objectStoreEnabled = objectStoreEnabled;
+        this.objectStoreConnector = objectStoreConnector;
+        this.localCacheBytesUsed = localCacheBytesUsed;
+        this.localCacheBytesMax = localCacheBytesMax;
+        this.localCacheNumFiles = localCacheNumFiles;
+        this.lastUploadedGeneration = lastUploadedGeneration;
+        this.uploadQueueDepth = uploadQueueDepth;
+        this.totalUploads = totalUploads;
+        this.totalUploadFailures = totalUploadFailures;
+        this.replicaMode = replicaMode;
     }
-    
-    /**
-     * Gets the number of column families.
-     *
-     * @return number of column families
-     */
+
     public int getNumColumnFamilies() {
         return numColumnFamilies;
     }
-    
-    /**
-     * Gets the system total memory.
-     *
-     * @return total memory in bytes
-     */
+
     public long getTotalMemory() {
         return totalMemory;
     }
-    
-    /**
-     * Gets the system available memory at open time.
-     *
-     * @return available memory in bytes
-     */
+
     public long getAvailableMemory() {
         return availableMemory;
     }
-    
-    /**
-     * Gets the resolved memory limit (auto or configured).
-     *
-     * @return resolved memory limit in bytes
-     */
+
     public long getResolvedMemoryLimit() {
         return resolvedMemoryLimit;
     }
-    
-    /**
-     * Gets the current memory pressure level.
-     * 0=normal, 1=elevated, 2=high, 3=critical.
-     *
-     * @return memory pressure level
-     */
+
     public int getMemoryPressureLevel() {
         return memoryPressureLevel;
     }
-    
-    /**
-     * Gets the number of pending flush operations (queued + in-flight).
-     *
-     * @return flush pending count
-     */
+
     public int getFlushPendingCount() {
         return flushPendingCount;
     }
-    
-    /**
-     * Gets the total bytes in active memtables across all column families.
-     *
-     * @return total memtable bytes
-     */
+
     public long getTotalMemtableBytes() {
         return totalMemtableBytes;
     }
-    
-    /**
-     * Gets the total immutable memtables across all column families.
-     *
-     * @return total immutable count
-     */
+
     public int getTotalImmutableCount() {
         return totalImmutableCount;
     }
-    
-    /**
-     * Gets the total SSTables across all column families and levels.
-     *
-     * @return total SSTable count
-     */
+
     public int getTotalSstableCount() {
         return totalSstableCount;
     }
-    
-    /**
-     * Gets the total data size (klog + vlog) across all column families.
-     *
-     * @return total data size in bytes
-     */
+
     public long getTotalDataSizeBytes() {
         return totalDataSizeBytes;
     }
-    
-    /**
-     * Gets the number of currently open SSTable file handles.
-     *
-     * @return number of open SSTables
-     */
+
     public int getNumOpenSstables() {
         return numOpenSstables;
     }
-    
-    /**
-     * Gets the current global sequence number.
-     *
-     * @return global sequence number
-     */
+
     public long getGlobalSeq() {
         return globalSeq;
     }
-    
-    /**
-     * Gets the bytes held by in-flight transactions.
-     *
-     * @return transaction memory bytes
-     */
+
     public long getTxnMemoryBytes() {
         return txnMemoryBytes;
     }
-    
-    /**
-     * Gets the number of pending compaction tasks.
-     *
-     * @return compaction queue size
-     */
+
     public long getCompactionQueueSize() {
         return compactionQueueSize;
     }
-    
-    /**
-     * Gets the number of pending flush tasks in queue.
-     *
-     * @return flush queue size
-     */
+
     public long getFlushQueueSize() {
         return flushQueueSize;
     }
-    
+
+    public boolean isUnifiedMemtableEnabled() {
+        return unifiedMemtableEnabled;
+    }
+
+    public long getUnifiedMemtableBytes() {
+        return unifiedMemtableBytes;
+    }
+
+    public int getUnifiedImmutableCount() {
+        return unifiedImmutableCount;
+    }
+
+    public boolean isUnifiedIsFlushing() {
+        return unifiedIsFlushing;
+    }
+
+    public int getUnifiedNextCfIndex() {
+        return unifiedNextCfIndex;
+    }
+
+    public long getUnifiedWalGeneration() {
+        return unifiedWalGeneration;
+    }
+
+    public boolean isObjectStoreEnabled() {
+        return objectStoreEnabled;
+    }
+
+    public String getObjectStoreConnector() {
+        return objectStoreConnector;
+    }
+
+    public long getLocalCacheBytesUsed() {
+        return localCacheBytesUsed;
+    }
+
+    public long getLocalCacheBytesMax() {
+        return localCacheBytesMax;
+    }
+
+    public int getLocalCacheNumFiles() {
+        return localCacheNumFiles;
+    }
+
+    public long getLastUploadedGeneration() {
+        return lastUploadedGeneration;
+    }
+
+    public long getUploadQueueDepth() {
+        return uploadQueueDepth;
+    }
+
+    public long getTotalUploads() {
+        return totalUploads;
+    }
+
+    public long getTotalUploadFailures() {
+        return totalUploadFailures;
+    }
+
+    public boolean isReplicaMode() {
+        return replicaMode;
+    }
+
     @Override
     public String toString() {
         return "DbStats{" +
@@ -215,6 +242,22 @@ public class DbStats {
             ", txnMemoryBytes=" + txnMemoryBytes +
             ", compactionQueueSize=" + compactionQueueSize +
             ", flushQueueSize=" + flushQueueSize +
+            ", unifiedMemtableEnabled=" + unifiedMemtableEnabled +
+            ", unifiedMemtableBytes=" + unifiedMemtableBytes +
+            ", unifiedImmutableCount=" + unifiedImmutableCount +
+            ", unifiedIsFlushing=" + unifiedIsFlushing +
+            ", unifiedNextCfIndex=" + unifiedNextCfIndex +
+            ", unifiedWalGeneration=" + unifiedWalGeneration +
+            ", objectStoreEnabled=" + objectStoreEnabled +
+            ", objectStoreConnector='" + objectStoreConnector + '\'' +
+            ", localCacheBytesUsed=" + localCacheBytesUsed +
+            ", localCacheBytesMax=" + localCacheBytesMax +
+            ", localCacheNumFiles=" + localCacheNumFiles +
+            ", lastUploadedGeneration=" + lastUploadedGeneration +
+            ", uploadQueueDepth=" + uploadQueueDepth +
+            ", totalUploads=" + totalUploads +
+            ", totalUploadFailures=" + totalUploadFailures +
+            ", replicaMode=" + replicaMode +
             '}';
     }
 }
