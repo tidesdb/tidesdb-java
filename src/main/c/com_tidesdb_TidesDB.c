@@ -189,7 +189,7 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
     jboolean enableBlockIndexes, jint indexSampleRatio, jint blockIndexPrefixLen, jint syncMode,
     jlong syncIntervalUs, jstring comparatorName, jint skipListMaxLevel, jfloat skipListProbability,
     jint defaultIsolationLevel, jlong minDiskSpace, jint l1FileCountTrigger,
-    jint l0QueueStallThreshold, jboolean useBtree, jlong objectTargetFileSize,
+    jint l0QueueStallThreshold, jboolean useBtree,
     jboolean objectLazyCompaction, jboolean objectPrefetchCompaction)
 {
     tidesdb_t *db = (tidesdb_t *)(uintptr_t)handle;
@@ -227,7 +227,6 @@ JNIEXPORT void JNICALL Java_com_tidesdb_TidesDB_nativeCreateColumnFamily(
         .l1_file_count_trigger = l1FileCountTrigger,
         .l0_queue_stall_threshold = l0QueueStallThreshold,
         .use_btree = useBtree ? 1 : 0,
-        .object_target_file_size = (size_t)objectTargetFileSize,
         .object_lazy_compaction = objectLazyCompaction ? 1 : 0,
         .object_prefetch_compaction = objectPrefetchCompaction ? 1 : 0};
 
@@ -715,6 +714,27 @@ JNIEXPORT void JNICALL Java_com_tidesdb_Transaction_nativeDelete(JNIEnv *env, jc
     jbyte *keyBytes = (*env)->GetByteArrayElements(env, key, NULL);
 
     int result = tidesdb_txn_delete(txn, cf, (uint8_t *)keyBytes, keyLen);
+
+    (*env)->ReleaseByteArrayElements(env, key, keyBytes, JNI_ABORT);
+
+    if (result != TDB_SUCCESS)
+    {
+        throwTidesDBException(env, result, getErrorMessage(result));
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_tidesdb_Transaction_nativeSingleDelete(JNIEnv *env, jclass cls,
+                                                                       jlong handle,
+                                                                       jlong cfHandle,
+                                                                       jbyteArray key)
+{
+    tidesdb_txn_t *txn = (tidesdb_txn_t *)(uintptr_t)handle;
+    tidesdb_column_family_t *cf = (tidesdb_column_family_t *)(uintptr_t)cfHandle;
+
+    jsize keyLen = (*env)->GetArrayLength(env, key);
+    jbyte *keyBytes = (*env)->GetByteArrayElements(env, key, NULL);
+
+    int result = tidesdb_txn_single_delete(txn, cf, (uint8_t *)keyBytes, keyLen);
 
     (*env)->ReleaseByteArrayElements(env, key, keyBytes, JNI_ABORT);
 

@@ -142,7 +142,6 @@ public class TidesDB implements Closeable {
             config.getL1FileCountTrigger(),
             config.getL0QueueStallThreshold(),
             config.isUseBtree(),
-            config.getObjectTargetFileSize(),
             config.isObjectLazyCompaction(),
             config.isObjectPrefetchCompaction()
         );
@@ -399,7 +398,7 @@ public class TidesDB implements Closeable {
         int syncMode, long syncIntervalUs, String comparatorName, int skipListMaxLevel,
         float skipListProbability, int defaultIsolationLevel, long minDiskSpace,
         int l1FileCountTrigger, int l0QueueStallThreshold, boolean useBtree,
-        long objectTargetFileSize, boolean objectLazyCompaction,
+        boolean objectLazyCompaction,
         boolean objectPrefetchCompaction) throws TidesDBException;
     
     private static native void nativeDropColumnFamily(long handle, String name) throws TidesDBException;

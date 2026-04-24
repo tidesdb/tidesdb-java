@@ -44,7 +44,6 @@ public class ColumnFamilyConfig {
     private int l1FileCountTrigger;
     private int l0QueueStallThreshold;
     private boolean useBtree;
-    private long objectTargetFileSize;
     private boolean objectLazyCompaction;
     private boolean objectPrefetchCompaction;
 
@@ -70,7 +69,6 @@ public class ColumnFamilyConfig {
         this.l1FileCountTrigger = builder.l1FileCountTrigger;
         this.l0QueueStallThreshold = builder.l0QueueStallThreshold;
         this.useBtree = builder.useBtree;
-        this.objectTargetFileSize = builder.objectTargetFileSize;
         this.objectLazyCompaction = builder.objectLazyCompaction;
         this.objectPrefetchCompaction = builder.objectPrefetchCompaction;
     }
@@ -103,7 +101,6 @@ public class ColumnFamilyConfig {
             .l1FileCountTrigger(4)
             .l0QueueStallThreshold(20)
             .useBtree(false)
-            .objectTargetFileSize(0)
             .objectLazyCompaction(false)
             .objectPrefetchCompaction(true)
             .build();
@@ -139,7 +136,6 @@ public class ColumnFamilyConfig {
     public int getL1FileCountTrigger() { return l1FileCountTrigger; }
     public int getL0QueueStallThreshold() { return l0QueueStallThreshold; }
     public boolean isUseBtree() { return useBtree; }
-    public long getObjectTargetFileSize() { return objectTargetFileSize; }
     public boolean isObjectLazyCompaction() { return objectLazyCompaction; }
     public boolean isObjectPrefetchCompaction() { return objectPrefetchCompaction; }
 
@@ -168,7 +164,6 @@ public class ColumnFamilyConfig {
         private int l1FileCountTrigger = 4;
         private int l0QueueStallThreshold = 20;
         private boolean useBtree = false;
-        private long objectTargetFileSize = 0;
         private boolean objectLazyCompaction = false;
         private boolean objectPrefetchCompaction = true;
 
@@ -274,11 +269,6 @@ public class ColumnFamilyConfig {
         
         public Builder useBtree(boolean useBtree) {
             this.useBtree = useBtree;
-            return this;
-        }
-
-        public Builder objectTargetFileSize(long objectTargetFileSize) {
-            this.objectTargetFileSize = objectTargetFileSize;
             return this;
         }
 
