@@ -149,9 +149,9 @@ public class ColumnFamily {
     
     /**
      * Estimates the computational cost of iterating between two keys in this column family.
-     * The returned value is an opaque double — meaningful only for comparison with other
+     * The returned value is an opaque double - meaningful only for comparison with other
      * values from the same method. Uses only in-memory metadata and performs no disk I/O.
-     * Key order does not matter — the method normalizes the range internally.
+     * Key order does not matter - the method normalizes the range internally.
      *
      * @param keyA first key (bound of range)
      * @param keyB second key (bound of range)

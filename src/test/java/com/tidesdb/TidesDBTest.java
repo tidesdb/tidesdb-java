@@ -1024,7 +1024,7 @@ public class TidesDBTest {
                 return 0;
             });
             
-            // First commit — hook should fire
+            // First commit - hook should fire
             try (Transaction txn = db.beginTransaction()) {
                 txn.put(cf, "key1".getBytes(), "value1".getBytes());
                 txn.commit();
@@ -1034,7 +1034,7 @@ public class TidesDBTest {
             // Clear the hook
             cf.clearCommitHook();
             
-            // Second commit — hook should NOT fire
+            // Second commit - hook should NOT fire
             try (Transaction txn = db.beginTransaction()) {
                 txn.put(cf, "key2".getBytes(), "value2".getBytes());
                 txn.commit();
@@ -1505,21 +1505,91 @@ public class TidesDBTest {
             .blockCacheSize(64 * 1024 * 1024)
             .maxOpenSSTables(256)
             .build();
-        
+
         try (TidesDB db = TidesDB.open(config)) {
             ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
             db.createColumnFamily("test_cf", cfConfig);
-            
+
             ColumnFamily cf = db.getColumnFamily("test_cf");
-            
+
             Transaction txn = db.beginTransaction();
             txn.put(cf, "key1".getBytes(), "value1".getBytes());
             txn.commit();
-            
+
             // Null isolation level should throw IllegalArgumentException
             assertThrows(IllegalArgumentException.class, () -> txn.reset(null));
-            
+
             txn.free();
+        }
+    }
+
+    @Test
+    @Order(42)
+    void testTransactionSingleDelete() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_single_delete").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+
+            byte[] key = "single_key".getBytes(StandardCharsets.UTF_8);
+            byte[] value = "single_value".getBytes(StandardCharsets.UTF_8);
+
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, key, value);
+                txn.commit();
+            }
+
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] result = txn.get(cf, key);
+                assertNotNull(result);
+                assertArrayEquals(value, result);
+            }
+
+            try (Transaction txn = db.beginTransaction()) {
+                txn.singleDelete(cf, key);
+                txn.commit();
+            }
+
+            try (Transaction txn = db.beginTransaction()) {
+                assertThrows(TidesDBException.class, () -> txn.get(cf, key));
+            }
+        }
+    }
+
+    @Test
+    @Order(43)
+    void testTransactionSingleDeleteNullArgs() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_single_delete_null").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
+            db.createColumnFamily("test_cf", cfConfig);
+
+            ColumnFamily cf = db.getColumnFamily("test_cf");
+
+            try (Transaction txn = db.beginTransaction()) {
+                assertThrows(IllegalArgumentException.class,
+                    () -> txn.singleDelete(null, "k".getBytes()));
+                assertThrows(IllegalArgumentException.class,
+                    () -> txn.singleDelete(cf, null));
+                assertThrows(IllegalArgumentException.class,
+                    () -> txn.singleDelete(cf, new byte[0]));
+            }
         }
     }
 }
