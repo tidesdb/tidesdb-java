@@ -22,7 +22,11 @@ package com.tidesdb;
  * Configuration for opening a TidesDB instance.
  */
 public class Config {
-    
+
+    static {
+        NativeLibrary.load();
+    }
+
     private String dbPath;
     private int numFlushThreads;
     private int numCompactionThreads;
@@ -40,6 +44,7 @@ public class Config {
     private long unifiedMemtableSyncIntervalUs;
     private String objectStoreFsPath;
     private ObjectStoreConfig objectStoreConfig;
+    private int maxConcurrentFlushes;
 
     private Config(Builder builder) {
         this.dbPath = builder.dbPath;
@@ -59,10 +64,13 @@ public class Config {
         this.unifiedMemtableSyncIntervalUs = builder.unifiedMemtableSyncIntervalUs;
         this.objectStoreFsPath = builder.objectStoreFsPath;
         this.objectStoreConfig = builder.objectStoreConfig;
+        this.maxConcurrentFlushes = builder.maxConcurrentFlushes;
     }
-    
+
     /**
-     * Creates a default configuration.
+     * Creates a default configuration. The {@code maxConcurrentFlushes} default is
+     * sourced from the underlying C library via {@code tidesdb_default_config()} so
+     * the binding tracks the engine's defaults automatically.
      *
      * @return a new Config with default values
      */
@@ -76,8 +84,11 @@ public class Config {
             .logToFile(false)
             .logTruncationAt(24 * 1024 * 1024)
             .maxMemoryUsage(0)
+            .maxConcurrentFlushes(nativeDefaultMaxConcurrentFlushes())
             .build();
     }
+
+    private static native int nativeDefaultMaxConcurrentFlushes();
     
     /**
      * Creates a new builder for Config.
@@ -157,6 +168,10 @@ public class Config {
         return objectStoreConfig;
     }
 
+    public int getMaxConcurrentFlushes() {
+        return maxConcurrentFlushes;
+    }
+
     /**
      * Builder for Config.
      */
@@ -178,6 +193,7 @@ public class Config {
         private long unifiedMemtableSyncIntervalUs = 0;
         private String objectStoreFsPath = null;
         private ObjectStoreConfig objectStoreConfig = null;
+        private int maxConcurrentFlushes = 0;
 
         public Builder dbPath(String dbPath) {
             this.dbPath = dbPath;
@@ -261,6 +277,11 @@ public class Config {
 
         public Builder objectStoreConfig(ObjectStoreConfig objectStoreConfig) {
             this.objectStoreConfig = objectStoreConfig;
+            return this;
+        }
+
+        public Builder maxConcurrentFlushes(int maxConcurrentFlushes) {
+            this.maxConcurrentFlushes = maxConcurrentFlushes;
             return this;
         }
 

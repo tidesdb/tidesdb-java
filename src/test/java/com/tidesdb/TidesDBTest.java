@@ -1566,6 +1566,181 @@ public class TidesDBTest {
     }
 
     @Test
+    @Order(44)
+    void testTombstoneCfConfigRoundTrip() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_tombstone_cfg").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
+                .tombstoneDensityTrigger(0.5)
+                .tombstoneDensityMinEntries(256)
+                .build();
+
+            db.createColumnFamily("ts_cf", cfConfig);
+            ColumnFamily cf = db.getColumnFamily("ts_cf");
+
+            ColumnFamilyConfig readback = cf.getStats().getConfig();
+            assertNotNull(readback);
+            assertEquals(0.5, readback.getTombstoneDensityTrigger(), 0.0);
+            assertEquals(256L, readback.getTombstoneDensityMinEntries());
+
+            // Defaults from the C library should be sensible (min entries ~= 1024)
+            ColumnFamilyConfig defaults = ColumnFamilyConfig.defaultConfig();
+            assertTrue(defaults.getTombstoneDensityMinEntries() > 0,
+                "default tombstoneDensityMinEntries should be non-zero (sourced from C library)");
+            assertTrue(defaults.getTombstoneDensityTrigger() >= 0.0
+                       && defaults.getTombstoneDensityTrigger() <= 1.0,
+                "default tombstoneDensityTrigger should be in [0.0, 1.0]");
+        }
+    }
+
+    @Test
+    @Order(45)
+    void testTombstoneStatsPopulated() throws TidesDBException, InterruptedException {
+        Config config = Config.builder(tempDir.resolve("testdb_tombstone_stats").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            db.createColumnFamily("ts_stats_cf", ColumnFamilyConfig.defaultConfig());
+            ColumnFamily cf = db.getColumnFamily("ts_stats_cf");
+
+            final int n = 200;
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < n; i++) {
+                    txn.put(cf, ("key" + i).getBytes(StandardCharsets.UTF_8),
+                                ("value" + i).getBytes(StandardCharsets.UTF_8));
+                }
+                txn.commit();
+            }
+            cf.flushMemtable();
+
+            try (Transaction txn = db.beginTransaction()) {
+                for (int i = 0; i < n / 2; i++) {
+                    txn.delete(cf, ("key" + i).getBytes(StandardCharsets.UTF_8));
+                }
+                txn.commit();
+            }
+            cf.flushMemtable();
+
+            // Wait for the flush to land so the stats include the tombstones
+            Thread.sleep(500);
+
+            Stats stats = cf.getStats();
+            assertNotNull(stats);
+            assertTrue(stats.getTotalTombstones() > 0,
+                "expected total_tombstones > 0 after deletes + flush");
+            assertTrue(stats.getTombstoneRatio() >= 0.0 && stats.getTombstoneRatio() <= 1.0,
+                "tombstone_ratio must be within [0.0, 1.0]");
+            assertTrue(stats.getMaxSstDensity() >= 0.0 && stats.getMaxSstDensity() <= 1.0,
+                "max_sst_density must be within [0.0, 1.0]");
+            assertTrue(stats.getMaxSstDensityLevel() >= 0,
+                "max_sst_density_level must be non-negative");
+
+            long[] perLevel = stats.getLevelTombstoneCounts();
+            assertNotNull(perLevel, "level_tombstone_counts must be populated");
+            assertEquals(stats.getNumLevels(), perLevel.length,
+                "level_tombstone_counts length must match num_levels");
+        }
+    }
+
+    @Test
+    @Order(46)
+    void testCompactRange() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_compact_range").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            // Small write buffer keeps each batch falling into its own SSTable
+            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
+                .writeBufferSize(64 * 1024)
+                .build();
+            db.createColumnFamily("range_cf", cfConfig);
+            ColumnFamily cf = db.getColumnFamily("range_cf");
+
+            // Multi-batch insert + flush to spread keys across several SSTables
+            for (int batch = 0; batch < 4; batch++) {
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 50; i++) {
+                        int n = batch * 50 + i;
+                        byte[] key = String.format("k%05d", n).getBytes(StandardCharsets.UTF_8);
+                        byte[] value = ("value" + n).getBytes(StandardCharsets.UTF_8);
+                        txn.put(cf, key, value);
+                    }
+                    txn.commit();
+                }
+                cf.flushMemtable();
+            }
+
+            // Narrow range compaction over a slice of the keyspace
+            byte[] start = "k00050".getBytes(StandardCharsets.UTF_8);
+            byte[] end   = "k00100".getBytes(StandardCharsets.UTF_8);
+            cf.compactRange(start, end);
+
+            // Both endpoints null should be rejected with INVALID_ARGS
+            TidesDBException ex = assertThrows(TidesDBException.class,
+                () -> cf.compactRange(null, null));
+            assertEquals(-2, ex.getErrorCode(), "expected TDB_ERR_INVALID_ARGS for both-null range");
+
+            // Both empty should also be rejected
+            assertThrows(TidesDBException.class,
+                () -> cf.compactRange(new byte[0], new byte[0]));
+
+            // A key outside the compacted range must still read back unchanged
+            try (Transaction txn = db.beginTransaction()) {
+                byte[] outside = txn.get(cf, "k00150".getBytes(StandardCharsets.UTF_8));
+                assertNotNull(outside);
+                assertArrayEquals("value150".getBytes(StandardCharsets.UTF_8), outside);
+            }
+        }
+    }
+
+    @Test
+    @Order(47)
+    void testMaxConcurrentFlushes() throws TidesDBException {
+        Config config = Config.builder(tempDir.resolve("testdb_max_flushes").toString())
+            .numFlushThreads(2)
+            .numCompactionThreads(2)
+            .logLevel(LogLevel.INFO)
+            .blockCacheSize(64 * 1024 * 1024)
+            .maxOpenSSTables(256)
+            .maxConcurrentFlushes(1)
+            .build();
+
+        try (TidesDB db = TidesDB.open(config)) {
+            db.createColumnFamily("flush_cf", ColumnFamilyConfig.defaultConfig());
+            ColumnFamily cf = db.getColumnFamily("flush_cf");
+
+            try (Transaction txn = db.beginTransaction()) {
+                txn.put(cf, "k".getBytes(StandardCharsets.UTF_8),
+                            "v".getBytes(StandardCharsets.UTF_8));
+                txn.commit();
+            }
+            cf.flushMemtable();
+        }
+
+        // defaultConfig() should source maxConcurrentFlushes from the C library
+        Config defaults = Config.defaultConfig();
+        assertTrue(defaults.getMaxConcurrentFlushes() > 0,
+            "default maxConcurrentFlushes should be non-zero (sourced from tidesdb_default_config())");
+    }
+
+    @Test
     @Order(43)
     void testTransactionSingleDeleteNullArgs() throws TidesDBException {
         Config config = Config.builder(tempDir.resolve("testdb_single_delete_null").toString())

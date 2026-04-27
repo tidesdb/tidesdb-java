@@ -86,9 +86,10 @@ public class TidesDB implements Closeable {
             osc != null ? osc.isWalSyncOnCommit() : false,
             osc != null ? osc.isReplicaMode() : false,
             osc != null ? osc.getReplicaSyncIntervalUs() : 5000000,
-            osc != null ? osc.isReplicaReplayWal() : true
+            osc != null ? osc.isReplicaReplayWal() : true,
+            config.getMaxConcurrentFlushes()
         );
-        
+
         return new TidesDB(handle);
     }
     
@@ -141,6 +142,8 @@ public class TidesDB implements Closeable {
             config.getMinDiskSpace(),
             config.getL1FileCountTrigger(),
             config.getL0QueueStallThreshold(),
+            config.getTombstoneDensityTrigger(),
+            config.getTombstoneDensityMinEntries(),
             config.isUseBtree(),
             config.isObjectLazyCompaction(),
             config.isObjectPrefetchCompaction()
@@ -387,7 +390,8 @@ public class TidesDB implements Closeable {
                                           boolean oscWalUploadSync, long oscWalSyncThresholdBytes,
                                           boolean oscWalSyncOnCommit, boolean oscReplicaMode,
                                           long oscReplicaSyncIntervalUs,
-                                          boolean oscReplicaReplayWal) throws TidesDBException;
+                                          boolean oscReplicaReplayWal,
+                                          int maxConcurrentFlushes) throws TidesDBException;
     
     private static native void nativeClose(long handle);
     
@@ -397,7 +401,9 @@ public class TidesDB implements Closeable {
         double bloomFPR, boolean enableBlockIndexes, int indexSampleRatio, int blockIndexPrefixLen,
         int syncMode, long syncIntervalUs, String comparatorName, int skipListMaxLevel,
         float skipListProbability, int defaultIsolationLevel, long minDiskSpace,
-        int l1FileCountTrigger, int l0QueueStallThreshold, boolean useBtree,
+        int l1FileCountTrigger, int l0QueueStallThreshold,
+        double tombstoneDensityTrigger, long tombstoneDensityMinEntries,
+        boolean useBtree,
         boolean objectLazyCompaction,
         boolean objectPrefetchCompaction) throws TidesDBException;
     
