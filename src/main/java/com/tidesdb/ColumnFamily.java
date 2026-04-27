@@ -64,6 +64,24 @@ public class ColumnFamily {
     public void compact() throws TidesDBException {
         nativeCompact(nativeHandle);
     }
+
+    /**
+     * Synchronously compacts every SSTable whose key range overlaps {@code [startKey, endKey)}.
+     * Blocks the calling thread until the merge commits or fails - does not enqueue work
+     * onto the compaction thread pool.
+     *
+     * <p>A {@code null} or empty endpoint means unbounded on that side. Both endpoints
+     * being {@code null} or empty is rejected with {@link TidesDBException}; callers
+     * wanting full-CF compaction must use {@link #compact()}.</p>
+     *
+     * @param startKey lower bound of the range, or {@code null}/empty for unbounded
+     * @param endKey   upper bound (exclusive), or {@code null}/empty for unbounded
+     * @throws TidesDBException if the range is invalid, another compaction is running,
+     *                          or the merge fails
+     */
+    public void compactRange(byte[] startKey, byte[] endKey) throws TidesDBException {
+        nativeCompactRange(nativeHandle, startKey, endKey);
+    }
     
     /**
      * Manually triggers memtable flush for this column family.
@@ -203,6 +221,7 @@ public class ColumnFamily {
     
     private static native Stats nativeGetStats(long handle) throws TidesDBException;
     private static native void nativeCompact(long handle) throws TidesDBException;
+    private static native void nativeCompactRange(long handle, byte[] startKey, byte[] endKey) throws TidesDBException;
     private static native void nativeFlushMemtable(long handle) throws TidesDBException;
     private static native boolean nativeIsFlushing(long handle);
     private static native boolean nativeIsCompacting(long handle);
