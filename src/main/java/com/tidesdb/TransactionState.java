@@ -19,47 +19,40 @@
 package com.tidesdb;
 
 /**
- * Logging level for the native TidesDB library, used both as a message severity
- * and as the sink threshold a message must meet or exceed to be emitted. A larger
- * value is more severe, so a higher threshold emits fewer lines.
- *
- * <p>Each constant maps to an integer used by the JNI bridge.
+ * Transaction lifecycle state, reported by {@link Transaction#state()} for
+ * two-phase-commit coordination. Each constant maps to an integer used by the
+ * JNI bridge.
  */
-public enum LogLevel {
+public enum TransactionState {
 
     /**
-     * No logging.
+     * Buffering writes, not yet resolved.
      */
-    NONE(0),
+    ACTIVE(0),
 
     /**
-     * Low severity, highly detailed messages for technical debugging.
+     * Durably prepared under an xid, awaiting commit or rollback.
      */
-    TRACE(1),
+    PREPARED(1),
 
     /**
-     * Standard information describing engine status or operations.
+     * Committed and applied.
      */
-    INFO(2),
+    COMMITTED(2),
 
     /**
-     * Non-imminent errors that require awareness.
+     * Rolled back or expired.
      */
-    WARN(3),
-
-    /**
-     * An operation failed.
-     */
-    ERROR(4);
+    ABORTED(3);
 
     private final int value;
 
-    LogLevel(int value) {
+    TransactionState(int value) {
         this.value = value;
     }
 
     /**
-     * Returns the JNI numeric mapping for this log level.
+     * Returns the JNI numeric mapping for this transaction state.
      *
      * @return the integer value passed to the native library
      */
@@ -68,20 +61,20 @@ public enum LogLevel {
     }
 
     /**
-     * Returns the {@link LogLevel} constant matching the given JNI integer
-     * value.
+     * Returns the {@link TransactionState} constant matching the given JNI
+     * integer value.
      *
      * @param value the JNI integer value
      * @return the matching constant
      * @throws IllegalArgumentException if {@code value} does not map to any
      *         known constant
      */
-    public static LogLevel fromValue(int value) {
-        for (LogLevel level : values()) {
-            if (level.value == value) {
-                return level;
+    public static TransactionState fromValue(int value) {
+        for (TransactionState state : values()) {
+            if (state.value == value) {
+                return state;
             }
         }
-        throw new IllegalArgumentException("Unknown log level value: " + value);
+        throw new IllegalArgumentException("Unknown transaction state value: " + value);
     }
 }
