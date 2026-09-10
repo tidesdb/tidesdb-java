@@ -19,59 +19,68 @@
 package com.tidesdb;
 
 /**
- * Compression algorithm for column family SSTables. Each constant maps to an
- * integer used by the JNI bridge.
+ * A built-in compression codec, usable as an entry in a column family's encoding
+ * pipeline. Each constant's {@link #getValue()} is its encoding id, which is
+ * persisted in SSTable and value-log metadata.
+ *
+ * <p>Every constant is always defined, but whether a backend can actually be
+ * used is a build-time choice of the native library. Ask
+ * {@link TidesDB#isCompressionAvailable(CompressionAlgorithm)} before choosing
+ * one, rather than discovering it when a node fails to decode. {@link #NONE} is
+ * always available.
  */
 public enum CompressionAlgorithm {
 
     /**
-     * No compression.
+     * No compression; data is stored verbatim.
      */
-    NO_COMPRESSION(0),
+    NONE(0),
 
     /**
      * Snappy compression.
      */
-    SNAPPY_COMPRESSION(1),
+    SNAPPY(1),
 
     /**
      * LZ4 compression with default settings.
      */
-    LZ4_COMPRESSION(2),
+    LZ4(2),
 
     /**
      * Zstandard compression.
      */
-    ZSTD_COMPRESSION(3),
+    ZSTD(3),
 
     /**
-     * LZ4 compression optimized for speed.
+     * LZ4 compression optimised for speed.
      */
-    LZ4_FAST_COMPRESSION(4);
-    
+    LZ4_FAST(4);
+
     private final int value;
-    
+
     CompressionAlgorithm(int value) {
         this.value = value;
     }
-    
+
     /**
-     * Returns the JNI numeric mapping for this compression algorithm.
+     * Returns this codec's encoding id, the value stored in SSTable and
+     * value-log metadata and accepted by
+     * {@link ColumnFamilyConfig.Builder#encodingPipelineIds(int...)}.
      *
-     * @return the integer value passed to the native library
+     * @return the encoding id
      */
     public int getValue() {
         return value;
     }
-    
+
     /**
      * Returns the {@link CompressionAlgorithm} constant matching the given
-     * JNI integer value.
+     * encoding id.
      *
-     * @param value the JNI integer value
+     * @param value the encoding id
      * @return the matching constant
      * @throws IllegalArgumentException if {@code value} does not map to any
-     *         known constant
+     *         built-in codec
      */
     public static CompressionAlgorithm fromValue(int value) {
         for (CompressionAlgorithm algo : values()) {

@@ -19,37 +19,35 @@
 package com.tidesdb;
 
 /**
- * Represents a column family in TidesDB. A column family is an isolated
- * key-value store within a database, with its own independent configuration.
+ * A column family in TidesDB: an isolated key-value store within a database,
+ * with its own independent configuration.
  *
- * <p>A {@code ColumnFamily} is a handle returned by {@link TidesDB#getColumnFamily(String)}
- * and is not independently closeable. There is no Java-side guard against using
- * a column family after its owning database has been closed; callers must manage
- * the lifecycle externally.
+ * <p>A {@code ColumnFamily} is a handle returned by
+ * {@link TidesDB#getColumnFamily(String)} and is not independently closeable. It
+ * is invalid once its owning database is closed or the family is dropped.
+ *
+ * <p>The memtable and write-ahead log are shared across every family, so
+ * flushing and WAL syncing live on {@link TidesDB} rather than here.
  *
  * <p>This class is not guaranteed to be thread-safe.
  */
 public class ColumnFamily {
-    
+
     static {
         NativeLibrary.load();
     }
-    
+
     private final long nativeHandle;
     private final String name;
     private long commitHookCtxHandle = 0;
     private final TidesDB owner;
-    
-    ColumnFamily(long nativeHandle, String name) {
-        this(nativeHandle, name, null);
-    }
-    
+
     ColumnFamily(long nativeHandle, String name, TidesDB owner) {
         this.nativeHandle = nativeHandle;
         this.name = name;
         this.owner = owner;
     }
-    
+
     /**
      * Checks that the owning database is open. Throws if the owner is closed.
      */
@@ -58,204 +56,192 @@ public class ColumnFamily {
             throw new IllegalStateException("TidesDB instance is closed");
         }
     }
-    
+
+    private long ownerHandle() {
+        checkOwnerOpen();
+        return owner == null ? 0 : owner.getNativeHandle();
+    }
+
     /**
-     * Gets the name of this column family.
+     * Returns the name of this column family.
      *
      * @return the column family name, never {@code null}
      */
     public String getName() {
         return name;
     }
-    
+
     /**
-     * Retrieves statistics about this column family.
+     * Collects statistics for this column family.
      *
-     * @return column family statistics, never {@code null}
-     * @throws TidesDBException if the native stats retrieval fails
+     * @return the statistics, never {@code null}
+     * @throws IllegalStateException if the owning database is closed
+     * @throws TidesDBException if the native stats retrieval fails, including
+     *         {@link TidesDBException#ERR_LOCKED} when descriptor pressure kept a
+     *         level from being read
      */
-    public Stats getStats() throws TidesDBException {
+    public CfStats getStats() throws TidesDBException {
         checkOwnerOpen();
         return nativeGetStats(nativeHandle);
     }
-    
+
     /**
-     * Manually triggers compaction for this column family.
+     * Estimates the distinct key count of this column family.
      *
-     * @throws TidesDBException if the native compaction fails
+     * @return the estimated distinct key count
+     * @throws IllegalStateException if the owning database is closed
+     * @throws TidesDBException if the estimate fails, including
+     *         {@link TidesDBException#ERR_LOCKED} when descriptor pressure kept a
+     *         level from being read
      */
-    public void compact() throws TidesDBException {
+    public long estimateCardinality() throws TidesDBException {
         checkOwnerOpen();
-        nativeCompact(nativeHandle);
+        return nativeEstimateCardinality(nativeHandle);
     }
 
     /**
-     * Synchronously compacts every SSTable whose key range overlaps {@code [startKey, endKey)}.
-     * Blocks the calling thread until the merge commits or fails - does not enqueue work
-     * onto the compaction thread pool.
+     * Synchronously runs one forced compaction pass on this column family,
+     * merging even when no trigger is due.
      *
-     * <p>A {@code null} or empty endpoint means unbounded on that side. Both endpoints
-     * being {@code null} or empty is rejected with {@link TidesDBException}; callers
-     * wanting full-CF compaction must use {@link #compact()}.</p>
+     * @throws IllegalStateException if the owning database is closed
+     * @throws TidesDBException with {@link TidesDBException#ERR_LOCKED} if a
+     *         compaction is already running, in which case the work asked for is
+     *         usually already under way
+     */
+    public void compact() throws TidesDBException {
+        nativeCompact(ownerHandle(), nativeHandle);
+    }
+
+    /**
+     * Synchronously compacts every SSTable overlapping
+     * {@code [startKey, endKey)}, merging toward the largest level affected.
+     * Blocks the calling thread until the merge commits or fails.
      *
-     * @param startKey lower bound of the range, or {@code null}/empty for unbounded
-     * @param endKey   upper bound (exclusive), or {@code null}/empty for unbounded
-     * @throws TidesDBException if the range is invalid, another compaction is running,
-     *                          or the merge fails
+     * <p>A {@code null} or empty endpoint is unbounded on that side. Both being
+     * unbounded is rejected in favour of {@link #compact()}.
+     *
+     * @param startKey the range start, or {@code null}/empty for unbounded
+     * @param endKey the range end, or {@code null}/empty for unbounded
+     * @throws IllegalStateException if the owning database is closed
+     * @throws TidesDBException if the range is invalid, a compaction is already
+     *         running, or the merge fails
      */
     public void compactRange(byte[] startKey, byte[] endKey) throws TidesDBException {
-        checkOwnerOpen();
-        nativeCompactRange(nativeHandle, startKey, endKey);
+        nativeCompactRange(ownerHandle(), nativeHandle, startKey, endKey);
     }
-    
+
     /**
-     * Manually triggers a memtable flush for this column family.
+     * Reports whether a compaction is in progress on this column family.
      *
-     * @throws TidesDBException if the native flush fails
-     */
-    public void flushMemtable() throws TidesDBException {
-        checkOwnerOpen();
-        nativeFlushMemtable(nativeHandle);
-    }
-    
-    /**
-     * Checks if a flush operation is currently in progress for this column family.
-     *
-     * @return true if flushing is in progress
-     */
-    public boolean isFlushing() {
-        checkOwnerOpen();
-        return nativeIsFlushing(nativeHandle);
-    }
-    
-    /**
-     * Checks if a compaction operation is currently in progress for this column family.
-     *
-     * @return true if compaction is in progress
+     * @return {@code true} if compacting
+     * @throws IllegalStateException if the owning database is closed
      */
     public boolean isCompacting() {
         checkOwnerOpen();
         return nativeIsCompacting(nativeHandle);
     }
-    
+
     /**
-     * Updates runtime-safe configuration settings for this column family.
-     * Configuration changes are applied to new operations only.
-     * 
-     * <p>Updatable settings (safe to change at runtime):</p>
-     * <ul>
-     *   <li>writeBufferSize - Memtable flush threshold</li>
-     *   <li>skipListMaxLevel - Skip list level for new memtables</li>
-     *   <li>skipListProbability - Skip list probability for new memtables</li>
-     *   <li>bloomFPR - False positive rate for new SSTables</li>
-     *   <li>indexSampleRatio - Index sampling ratio for new SSTables</li>
-     *   <li>syncMode - Durability mode</li>
-     *   <li>syncIntervalUs - Sync interval in microseconds</li>
-     * </ul>
+     * Applies a new configuration to this column family at runtime. Every field
+     * may change, since byte-wise key ordering keeps all SSTables mergeable. The
+     * family name and id are preserved; a rename is separate.
      *
-     * @param config the new configuration
-     * @param persistToDisk if true, saves changes to config.ini
+     * @param config the configuration to apply; must not be {@code null}. Its
+     *        {@code name} field is ignored
+     * @param persistToDisk {@code true} to persist the new config in the
+     *        manifest, {@code false} to apply in memory only
+     * @throws IllegalArgumentException if {@code config} is {@code null}
+     * @throws IllegalStateException if the owning database is closed
      * @throws TidesDBException if the update fails
      */
-    public void updateRuntimeConfig(ColumnFamilyConfig config, boolean persistToDisk) throws TidesDBException {
-        checkOwnerOpen();
+    public void updateRuntimeConfig(ColumnFamilyConfig config, boolean persistToDisk)
+            throws TidesDBException {
         if (config == null) {
             throw new IllegalArgumentException("Config cannot be null");
         }
-        nativeUpdateRuntimeConfig(nativeHandle,
-            config.getWriteBufferSize(),
-            config.getSkipListMaxLevel(),
-            config.getSkipListProbability(),
-            config.getBloomFPR(),
-            config.getIndexSampleRatio(),
-            config.getSyncMode().getValue(),
-            config.getSyncIntervalUs(),
+        nativeUpdateRuntimeConfig(ownerHandle(), nativeHandle,
+            config.getLevelSizeRatio(),
+            config.getMinLevels(),
+            config.getDividingLevelOffset(),
+            config.isKeepValuesInline(),
+            config.getBtreeKlogBlockSize(),
+            config.getEncodingPipeline(),
+            config.isEnableBloomFilter(),
+            config.getBloomFpr(),
+            config.getDefaultIsolationLevel().getValue(),
+            config.getL1FileCountTrigger(),
+            config.getTombstoneDensityTrigger(),
+            config.getTombstoneDensityMinEntries(),
             persistToDisk);
     }
-    
+
     /**
-     * Forces a synchronous flush and aggressive compaction for this column family.
-     * Unlike {@link #compact()} and {@link #flushMemtable()} (which are non-blocking),
-     * purge blocks until all flush and compaction I/O is complete.
+     * Describes the key range {@code [keyA, keyB)} for a query planner, reporting
+     * both what a scan of it would cost and how many live keys it holds.
      *
-     * @throws TidesDBException if the purge fails
-     */
-    public void purge() throws TidesDBException {
-        checkOwnerOpen();
-        nativePurge(nativeHandle);
-    }
-    
-    /**
-     * Forces an immediate fsync of the active write-ahead log for this column family.
-     * Useful for explicit durability control when using SYNC_NONE or SYNC_INTERVAL modes.
+     * <p>The count is memtable-aware. A range small enough to walk is counted
+     * exactly and reports {@link RangeStats#isKeysExact()}; a wider one is
+     * estimated from SSTable metadata without walking, so the call stays cheap
+     * enough for plan time whatever the range covers.
      *
-     * @throws TidesDBException if the WAL sync fails
+     * @param keyA the range start, inclusive; must not be {@code null} or empty
+     * @param keyB the range end, exclusive; must not be {@code null} or empty
+     * @return the range statistics, never {@code null}
+     * @throws IllegalArgumentException if either bound is {@code null} or empty
+     * @throws IllegalStateException if the owning database is closed
+     * @throws TidesDBException if the call fails, including
+     *         {@link TidesDBException#ERR_LOCKED} if the layout moved mid-scan
      */
-    public void syncWal() throws TidesDBException {
-        checkOwnerOpen();
-        nativeSyncWal(nativeHandle);
-    }
-    
-    /**
-     * Estimates the computational cost of iterating between two keys in this column family.
-     * The returned value is an opaque double - meaningful only for comparison with other
-     * values from the same method. Uses only in-memory metadata and performs no disk I/O.
-     * Key order does not matter - the method normalizes the range internally.
-     *
-     * @param keyA first key (bound of range)
-     * @param keyB second key (bound of range)
-     * @return estimated traversal cost (higher = more expensive), 0.0 if no overlapping data
-     * @throws TidesDBException if the estimation fails
-     */
-    public double rangeCost(byte[] keyA, byte[] keyB) throws TidesDBException {
-        checkOwnerOpen();
+    public RangeStats rangeStats(byte[] keyA, byte[] keyB) throws TidesDBException {
         if (keyA == null || keyA.length == 0) {
             throw new IllegalArgumentException("keyA cannot be null or empty");
         }
         if (keyB == null || keyB.length == 0) {
             throw new IllegalArgumentException("keyB cannot be null or empty");
         }
-        return nativeRangeCost(nativeHandle, keyA, keyB);
+        return nativeRangeStats(ownerHandle(), nativeHandle, keyA, keyB);
     }
-    
+
     /**
-     * Sets a commit hook (Change Data Capture) for this column family.
-     * The hook fires synchronously after every transaction commit, receiving the full
-     * batch of committed operations atomically. Keep the callback fast to avoid
-     * stalling writers.
+     * Sets a commit hook for this column family. The hook fires synchronously
+     * after every transaction commit, receiving the full batch of committed
+     * operations atomically. Keep the callback fast to avoid stalling writers.
      *
      * <p>Hooks are runtime-only and not persisted. After a database restart,
-     * hooks must be re-registered by the application.</p>
+     * hooks must be re-registered by the application.
      *
-     * @param hook the commit hook callback
+     * @param hook the commit hook callback; must not be {@code null}
+     * @throws IllegalArgumentException if {@code hook} is {@code null}
+     * @throws IllegalStateException if the owning database is closed
      * @throws TidesDBException if the hook cannot be set
      */
     public void setCommitHook(CommitHook hook) throws TidesDBException {
-        checkOwnerOpen();
         if (hook == null) {
             throw new IllegalArgumentException("Hook cannot be null, use clearCommitHook() instead");
         }
+        long dbHandle = ownerHandle();
         boolean firstInstall = (commitHookCtxHandle == 0);
-        commitHookCtxHandle = nativeSetCommitHook(nativeHandle, hook, commitHookCtxHandle);
+        commitHookCtxHandle = nativeSetCommitHook(dbHandle, nativeHandle, hook, commitHookCtxHandle);
         if (firstInstall && owner != null) {
             owner.registerHookColumnFamily(this);
         }
     }
-    
+
     /**
-     * Clears the commit hook for this column family.
-     * After this call, no further commit callbacks will fire.
+     * Clears the commit hook for this column family. After this call, no further
+     * commit callbacks fire.
      *
+     * @throws IllegalStateException if the owning database is closed
      * @throws TidesDBException if the hook cannot be cleared
      */
     public void clearCommitHook() throws TidesDBException {
-        checkOwnerOpen();
-        commitHookCtxHandle = nativeSetCommitHook(nativeHandle, null, commitHookCtxHandle);
+        long dbHandle = ownerHandle();
+        commitHookCtxHandle = nativeSetCommitHook(dbHandle, nativeHandle, null, commitHookCtxHandle);
         if (owner != null) {
             owner.unregisterHookColumnFamily(this);
         }
     }
-    
+
     /**
      * Best-effort hook detach during database close. The hook is removed from
      * the engine without caller interaction. Errors are swallowed.
@@ -263,29 +249,44 @@ public class ColumnFamily {
     void clearHookOnClose() {
         if (commitHookCtxHandle != 0) {
             try {
-                nativeSetCommitHook(nativeHandle, null, commitHookCtxHandle);
+                long dbHandle = owner == null ? 0 : owner.getNativeHandle();
+                nativeSetCommitHook(dbHandle, nativeHandle, null, commitHookCtxHandle);
             } catch (TidesDBException ignored) {
                 // Best-effort during shutdown.
             }
             commitHookCtxHandle = 0;
         }
     }
-    
+
     long getNativeHandle() {
         return nativeHandle;
     }
-    
-    private static native Stats nativeGetStats(long handle) throws TidesDBException;
-    private static native void nativeCompact(long handle) throws TidesDBException;
-    private static native void nativeCompactRange(long handle, byte[] startKey, byte[] endKey) throws TidesDBException;
-    private static native void nativeFlushMemtable(long handle) throws TidesDBException;
-    private static native boolean nativeIsFlushing(long handle);
-    private static native boolean nativeIsCompacting(long handle);
-    private static native void nativeUpdateRuntimeConfig(long handle, long writeBufferSize,
-        int skipListMaxLevel, float skipListProbability, double bloomFPR, int indexSampleRatio,
-        int syncMode, long syncIntervalUs, boolean persistToDisk) throws TidesDBException;
-    private static native double nativeRangeCost(long handle, byte[] keyA, byte[] keyB) throws TidesDBException;
-    private static native long nativeSetCommitHook(long handle, CommitHook hook, long oldCtxHandle) throws TidesDBException;
-    private static native void nativePurge(long handle) throws TidesDBException;
-    private static native void nativeSyncWal(long handle) throws TidesDBException;
+
+    @Override
+    public String toString() {
+        return "ColumnFamily{name='" + name + "'}";
+    }
+
+    private static native CfStats nativeGetStats(long cfHandle) throws TidesDBException;
+
+    private static native long nativeEstimateCardinality(long cfHandle) throws TidesDBException;
+
+    private static native void nativeCompact(long dbHandle, long cfHandle) throws TidesDBException;
+
+    private static native void nativeCompactRange(long dbHandle, long cfHandle, byte[] startKey,
+                                                  byte[] endKey) throws TidesDBException;
+
+    private static native boolean nativeIsCompacting(long cfHandle);
+
+    private static native void nativeUpdateRuntimeConfig(long dbHandle, long cfHandle,
+        long levelSizeRatio, int minLevels, int dividingLevelOffset, boolean keepValuesInline,
+        long btreeKlogBlockSize, int[] encodingPipeline, boolean enableBloomFilter, double bloomFpr,
+        int defaultIsolationLevel, int l1FileCountTrigger, double tombstoneDensityTrigger,
+        long tombstoneDensityMinEntries, boolean persistToDisk) throws TidesDBException;
+
+    private static native RangeStats nativeRangeStats(long dbHandle, long cfHandle, byte[] keyA,
+                                                      byte[] keyB) throws TidesDBException;
+
+    private static native long nativeSetCommitHook(long dbHandle, long cfHandle, CommitHook hook,
+                                                   long oldCtxHandle) throws TidesDBException;
 }

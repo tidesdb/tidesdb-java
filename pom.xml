@@ -6,11 +6,11 @@
 
     <groupId>com.tidesdb</groupId>
     <artifactId>tidesdb-java</artifactId>
-    <version>0.8.3</version>
+    <version>1.0.0</version>
     <packaging>jar</packaging>
 
     <name>TidesDB Java</name>
-    <description>Java bindings for TidesDB - A high-performance embedded key-value storage engine</description>
+    <description>Java bindings for TidesDB 10.x - A high-performance embedded key-value storage engine</description>
     <url>https://github.com/tidesdb/tidesdb-java</url>
 
     <licenses>

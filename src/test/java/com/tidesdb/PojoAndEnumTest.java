@@ -8,7 +8,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     https://www.mozilla.org.org/en-US/MPL/2.0/
+ *     https://www.mozilla.org/en-US/MPL/2.0/
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,825 +18,629 @@
  */
 package com.tidesdb;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for pure-Java POJOs, enums, builders, and exception classes.
- * Covers branches and constructors not exercised by the integration tests
- * in {@link TidesDBTest}.
+ * Tests for the value types and enums, which need no open database.
  */
-class PojoAndEnumTest {
+public class PojoAndEnumTest {
 
-    // -----------------------------------------------------------------------
-    // TidesDBException
-    // -----------------------------------------------------------------------
+    @Nested
+    class Enums {
 
-    @Test
-    void tidesDBException_messageConstructor_defaultsToUnknownErrorCode() {
-        TidesDBException ex = new TidesDBException("boom");
-        assertEquals("boom", ex.getMessage());
-        assertEquals(TidesDBException.ERR_UNKNOWN, ex.getErrorCode());
-    }
+        @Test
+        void logLevelMapsToTheNativeOrdering() {
+            assertEquals(0, LogLevel.NONE.getValue());
+            assertEquals(1, LogLevel.TRACE.getValue());
+            assertEquals(2, LogLevel.INFO.getValue());
+            assertEquals(3, LogLevel.WARN.getValue());
+            assertEquals(4, LogLevel.ERROR.getValue());
 
-    @Test
-    void tidesDBException_messageAndCodeConstructor() {
-        TidesDBException ex = new TidesDBException("not found", TidesDBException.ERR_NOT_FOUND);
-        assertEquals("not found", ex.getMessage());
-        assertEquals(TidesDBException.ERR_NOT_FOUND, ex.getErrorCode());
-    }
+            for (LogLevel level : LogLevel.values()) {
+                assertEquals(level, LogLevel.fromValue(level.getValue()));
+            }
+            assertThrows(IllegalArgumentException.class, () -> LogLevel.fromValue(99));
+        }
 
-    @Test
-    void tidesDBException_messageAndCauseConstructor() {
-        RuntimeException cause = new RuntimeException("root");
-        TidesDBException ex = new TidesDBException("wrapper", cause);
-        assertEquals("wrapper", ex.getMessage());
-        assertSame(cause, ex.getCause());
-        assertEquals(TidesDBException.ERR_UNKNOWN, ex.getErrorCode());
-    }
+        @Test
+        void isolationLevelRunsWeakestToStrongest() {
+            assertEquals(0, IsolationLevel.READ_UNCOMMITTED.getValue());
+            assertEquals(1, IsolationLevel.READ_COMMITTED.getValue());
+            assertEquals(2, IsolationLevel.REPEATABLE_READ.getValue());
+            assertEquals(3, IsolationLevel.SNAPSHOT.getValue());
+            assertEquals(4, IsolationLevel.SERIALIZABLE.getValue());
 
-    @Test
-    void tidesDBException_messageCodeAndCauseConstructor() {
-        RuntimeException cause = new RuntimeException("root");
-        TidesDBException ex = new TidesDBException("io err", TidesDBException.ERR_IO, cause);
-        assertEquals("io err", ex.getMessage());
-        assertEquals(TidesDBException.ERR_IO, ex.getErrorCode());
-        assertSame(cause, ex.getCause());
-    }
+            for (IsolationLevel level : IsolationLevel.values()) {
+                assertEquals(level, IsolationLevel.fromValue(level.getValue()));
+            }
+            assertThrows(IllegalArgumentException.class, () -> IsolationLevel.fromValue(5));
+        }
 
-    @Test
-    void tidesDBException_getErrorMessage_coversAllKnownCodes() {
-        assertErrorMessage(TidesDBException.ERR_SUCCESS, "success");
-        assertErrorMessage(TidesDBException.ERR_MEMORY, "memory allocation failed");
-        assertErrorMessage(TidesDBException.ERR_INVALID_ARGS, "invalid arguments");
-        assertErrorMessage(TidesDBException.ERR_NOT_FOUND, "not found");
-        assertErrorMessage(TidesDBException.ERR_IO, "I/O error");
-        assertErrorMessage(TidesDBException.ERR_CORRUPTION, "data corruption");
-        assertErrorMessage(TidesDBException.ERR_EXISTS, "already exists");
-        assertErrorMessage(TidesDBException.ERR_CONFLICT, "transaction conflict");
-        assertErrorMessage(TidesDBException.ERR_TOO_LARGE, "key or value too large");
-        assertErrorMessage(TidesDBException.ERR_MEMORY_LIMIT, "memory limit exceeded");
-        assertErrorMessage(TidesDBException.ERR_INVALID_DB, "invalid database handle");
-        assertErrorMessage(TidesDBException.ERR_LOCKED, "database is locked");
-    }
+        @Test
+        void syncModeMapsToTheNativeValues() {
+            assertEquals(0, SyncMode.SYNC_NONE.getValue());
+            assertEquals(1, SyncMode.SYNC_FULL.getValue());
+            assertEquals(2, SyncMode.SYNC_INTERVAL.getValue());
 
-    @Test
-    void tidesDBException_getErrorMessage_unknownCodeReturnsUnknownError() {
-        TidesDBException ex = new TidesDBException("msg", 9999);
-        assertEquals("unknown error", ex.getErrorMessage());
-    }
+            for (SyncMode mode : SyncMode.values()) {
+                assertEquals(mode, SyncMode.fromValue(mode.getValue()));
+            }
+            assertThrows(IllegalArgumentException.class, () -> SyncMode.fromValue(3));
+        }
 
-    @Test
-    void tidesDBException_errorCodeConstants_areDistinct() {
-        int[] codes = {
-            TidesDBException.ERR_SUCCESS,
-            TidesDBException.ERR_MEMORY,
-            TidesDBException.ERR_INVALID_ARGS,
-            TidesDBException.ERR_NOT_FOUND,
-            TidesDBException.ERR_IO,
-            TidesDBException.ERR_CORRUPTION,
-            TidesDBException.ERR_EXISTS,
-            TidesDBException.ERR_CONFLICT,
-            TidesDBException.ERR_TOO_LARGE,
-            TidesDBException.ERR_MEMORY_LIMIT,
-            TidesDBException.ERR_INVALID_DB,
-            TidesDBException.ERR_UNKNOWN,
-            TidesDBException.ERR_LOCKED,
-        };
-        assertThat(codes).doesNotHaveDuplicates();
-    }
+        @Test
+        void compressionAlgorithmValuesAreTheEncodingIds() {
+            assertEquals(0, CompressionAlgorithm.NONE.getValue());
+            assertEquals(1, CompressionAlgorithm.SNAPPY.getValue());
+            assertEquals(2, CompressionAlgorithm.LZ4.getValue());
+            assertEquals(3, CompressionAlgorithm.ZSTD.getValue());
+            assertEquals(4, CompressionAlgorithm.LZ4_FAST.getValue());
 
-    private void assertErrorMessage(int code, String expectedMessage) {
-        TidesDBException ex = new TidesDBException("irrelevant", code);
-        assertEquals(expectedMessage, ex.getErrorMessage(),
-            "Error code " + code + " should map to '" + expectedMessage + "'");
-    }
+            for (CompressionAlgorithm algo : CompressionAlgorithm.values()) {
+                assertEquals(algo, CompressionAlgorithm.fromValue(algo.getValue()));
+            }
+            assertThrows(IllegalArgumentException.class, () -> CompressionAlgorithm.fromValue(5));
+        }
 
-    // -----------------------------------------------------------------------
-    // KeyValue
-    // -----------------------------------------------------------------------
+        @Test
+        void transactionStateCoversTheLifecycle() {
+            assertEquals(0, TransactionState.ACTIVE.getValue());
+            assertEquals(1, TransactionState.PREPARED.getValue());
+            assertEquals(2, TransactionState.COMMITTED.getValue());
+            assertEquals(3, TransactionState.ABORTED.getValue());
 
-    @Test
-    void keyValue_constructorAndGetters() {
-        byte[] k = {1, 2, 3};
-        byte[] v = {4, 5};
-        KeyValue kv = new KeyValue(k, v);
-        assertSame(k, kv.getKey());
-        assertSame(v, kv.getValue());
-    }
+            for (TransactionState state : TransactionState.values()) {
+                assertEquals(state, TransactionState.fromValue(state.getValue()));
+            }
+            assertThrows(IllegalArgumentException.class, () -> TransactionState.fromValue(4));
+        }
 
-    @Test
-    void keyValue_nullKeyAndValue() {
-        KeyValue kv = new KeyValue(null, null);
-        assertNull(kv.getKey());
-        assertNull(kv.getValue());
-    }
+        @Test
+        void stallReasonValuesAreContiguousIndices() {
+            StallReason[] reasons = StallReason.values();
+            for (int i = 0; i < reasons.length; i++) {
+                assertEquals(i, reasons[i].getValue(), "the value is the index into StallStats");
+                assertEquals(reasons[i], StallReason.fromValue(i));
+            }
+            assertThrows(IllegalArgumentException.class,
+                () -> StallReason.fromValue(reasons.length));
+        }
 
-    // -----------------------------------------------------------------------
-    // CommitOp
-    // -----------------------------------------------------------------------
+        @Test
+        void ioClassValuesAreContiguousIndices() {
+            IoClass[] classes = IoClass.values();
+            for (int i = 0; i < classes.length; i++) {
+                assertEquals(i, classes[i].getValue(), "the value is the index into IoStats");
+                assertEquals(classes[i], IoClass.fromValue(i));
+            }
+            assertThrows(IllegalArgumentException.class, () -> IoClass.fromValue(classes.length));
+        }
 
-    @Test
-    void commitOp_putOperation() {
-        byte[] key = {10};
-        byte[] val = {20};
-        CommitOp op = new CommitOp(key, val, 3600L, false);
-        assertSame(key, op.getKey());
-        assertSame(val, op.getValue());
-        assertEquals(3600L, op.getTtl());
-        assertFalse(op.isDelete());
-    }
-
-    @Test
-    void commitOp_deleteOperation() {
-        byte[] key = {10};
-        CommitOp op = new CommitOp(key, null, -1, true);
-        assertSame(key, op.getKey());
-        assertNull(op.getValue());
-        assertEquals(-1, op.getTtl());
-        assertTrue(op.isDelete());
-    }
-
-    // -----------------------------------------------------------------------
-    // CacheStats
-    // -----------------------------------------------------------------------
-
-    @Test
-    void cacheStats_constructorAndGetters() {
-        CacheStats cs = new CacheStats(true, 100, 4096, 80, 20, 0.8, 4);
-        assertTrue(cs.isEnabled());
-        assertEquals(100, cs.getTotalEntries());
-        assertEquals(4096, cs.getTotalBytes());
-        assertEquals(80, cs.getHits());
-        assertEquals(20, cs.getMisses());
-        assertEquals(0.8, cs.getHitRate(), 1e-9);
-        assertEquals(4, cs.getNumPartitions());
-    }
-
-    @Test
-    void cacheStats_toString() {
-        CacheStats cs = new CacheStats(false, 0, 0, 0, 0, 0.0, 1);
-        String str = cs.toString();
-        assertThat(str).contains("enabled=false");
-        assertThat(str).contains("totalEntries=0");
-        assertThat(str).contains("totalBytes=0");
-        assertThat(str).contains("hits=0");
-        assertThat(str).contains("misses=0");
-        assertThat(str).contains("hitRate=0.0");
-        assertThat(str).contains("numPartitions=1");
-    }
-
-    // -----------------------------------------------------------------------
-    // DbStats
-    // -----------------------------------------------------------------------
-
-    @Test
-    void dbStats_constructorAndGetters() {
-        DbStats stats = new DbStats(
-            5, 1000000, 500000, 2000000, 1, 3,
-            8000, 2, 10, 50000, 8, 42,
-            100, 0, 0,
-            false, 0, 0, false, 0, 0,
-            false, null, 0, 0, 0, 0, 0, 0, 0,
-            false, 0, 0,
-            0, 5000, 3000, 4000, 2000, 6000, 10, 20);
-
-        assertEquals(5, stats.getNumColumnFamilies());
-        assertEquals(1000000, stats.getTotalMemory());
-        assertEquals(500000, stats.getAvailableMemory());
-        assertEquals(2000000, stats.getResolvedMemoryLimit());
-        assertEquals(1, stats.getMemoryPressureLevel());
-        assertEquals(3, stats.getFlushPendingCount());
-        assertEquals(8000, stats.getTotalMemtableBytes());
-        assertEquals(2, stats.getTotalImmutableCount());
-        assertEquals(10, stats.getTotalSstableCount());
-        assertEquals(50000, stats.getTotalDataSizeBytes());
-        assertEquals(8, stats.getNumOpenSstables());
-        assertEquals(42, stats.getGlobalSeq());
-        assertEquals(100, stats.getTxnMemoryBytes());
-        assertEquals(0, stats.getCompactionQueueSize());
-        assertEquals(0, stats.getFlushQueueSize());
-        assertFalse(stats.isUnifiedMemtableEnabled());
-        assertEquals(0, stats.getUnifiedMemtableBytes());
-        assertEquals(0, stats.getUnifiedImmutableCount());
-        assertFalse(stats.isUnifiedIsFlushing());
-        assertEquals(0, stats.getUnifiedNextCfIndex());
-        assertEquals(0, stats.getUnifiedWalGeneration());
-        assertFalse(stats.isObjectStoreEnabled());
-        assertNull(stats.getObjectStoreConnector());
-        assertEquals(0, stats.getLocalCacheBytesUsed());
-        assertEquals(0, stats.getLocalCacheBytesMax());
-        assertEquals(0, stats.getLocalCacheNumFiles());
-        assertEquals(0, stats.getLastUploadedGeneration());
-        assertEquals(0, stats.getUploadQueueDepth());
-        assertEquals(0, stats.getTotalUploads());
-        assertEquals(0, stats.getTotalUploadFailures());
-        assertFalse(stats.isReplicaMode());
-        assertEquals(0, stats.getPrimaryEpoch());
-        assertEquals(0, stats.getSeenEpoch());
-        assertEquals(0, stats.getUwalBytesWritten());
-        assertEquals(5000, stats.getWalBytesWritten());
-        assertEquals(3000, stats.getFlushBytesWritten());
-        assertEquals(4000, stats.getCompactionBytesWritten());
-        assertEquals(2000, stats.getCompactionBytesRead());
-        assertEquals(6000, stats.getUserBytesWritten());
-        assertEquals(10, stats.getFlushCount());
-        assertEquals(20, stats.getCompactionCount());
-    }
-
-    @Test
-    void dbStats_toString() {
-        DbStats stats = new DbStats(
-            2, 100, 50, 200, 0, 0,
-            30, 0, 5, 100, 3, 1,
-            0, 0, 0,
-            false, 0, 0, false, 0, 0,
-            false, null, 0, 0, 0, 0, 0, 0, 0,
-            false, 0, 0,
-            0, 100, 200, 300, 400, 500, 1, 2);
-
-        String str = stats.toString();
-        assertThat(str).contains("numColumnFamilies=2");
-        assertThat(str).contains("totalMemory=100");
-        assertThat(str).contains("replicaMode=false");
-    }
-
-    // -----------------------------------------------------------------------
-    // CompressionAlgorithm enum
-    // -----------------------------------------------------------------------
-
-    @Test
-    void compressionAlgorithm_values() {
-        assertEquals(0, CompressionAlgorithm.NO_COMPRESSION.getValue());
-        assertEquals(1, CompressionAlgorithm.SNAPPY_COMPRESSION.getValue());
-        assertEquals(2, CompressionAlgorithm.LZ4_COMPRESSION.getValue());
-        assertEquals(3, CompressionAlgorithm.ZSTD_COMPRESSION.getValue());
-        assertEquals(4, CompressionAlgorithm.LZ4_FAST_COMPRESSION.getValue());
-    }
-
-    @Test
-    void compressionAlgorithm_fromValue_roundTripsAllValues() {
-        for (CompressionAlgorithm algo : CompressionAlgorithm.values()) {
-            assertEquals(algo, CompressionAlgorithm.fromValue(algo.getValue()),
-                "fromValue should round-trip for " + algo.name());
+        @Test
+        void stallReasonAndIoClassCarryNativeNames() {
+            for (StallReason reason : StallReason.values()) {
+                assertNotNull(reason.getNativeName());
+                assertFalse(reason.getNativeName().isEmpty());
+            }
+            for (IoClass cls : IoClass.values()) {
+                assertNotNull(cls.getNativeName());
+                assertFalse(cls.getNativeName().isEmpty());
+            }
         }
     }
 
-    @Test
-    void compressionAlgorithm_fromValue_invalidValueThrows() {
-        assertThatThrownBy(() -> CompressionAlgorithm.fromValue(99))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("99");
-    }
+    @Nested
+    class DatabaseConfig {
 
-    // -----------------------------------------------------------------------
-    // IsolationLevel enum
-    // -----------------------------------------------------------------------
+        @Test
+        void carriesTheNativeDefaults() {
+            Config config = Config.defaultConfig("/tmp/tidesdb-config-test");
 
-    @Test
-    void isolationLevel_values() {
-        assertEquals(0, IsolationLevel.READ_UNCOMMITTED.getValue());
-        assertEquals(1, IsolationLevel.READ_COMMITTED.getValue());
-        assertEquals(2, IsolationLevel.REPEATABLE_READ.getValue());
-        assertEquals(3, IsolationLevel.SNAPSHOT.getValue());
-        assertEquals(4, IsolationLevel.SERIALIZABLE.getValue());
-    }
+            assertEquals("/tmp/tidesdb-config-test", config.getDbPath());
+            assertTrue(config.getNumFlushThreads() > 0);
+            assertTrue(config.getNumCompactionThreads() > 0);
+            assertTrue(config.getBlockCacheSize() > 0);
+            assertTrue(config.getMaxOpenSSTables() > 0);
+            assertTrue(config.getMemtableWriteBufferSize() > 0);
+            assertTrue(config.getValueSeparationThreshold() > 0);
+            assertTrue(config.getVlogSegmentSize() > 0);
+            assertNotNull(config.getLogLevel());
+            assertNotNull(config.getMemtableSyncMode());
+            assertNotNull(config.toString());
+        }
 
-    @Test
-    void isolationLevel_fromValue_roundTripsAllValues() {
-        for (IsolationLevel level : IsolationLevel.values()) {
-            assertEquals(level, IsolationLevel.fromValue(level.getValue()),
-                "fromValue should round-trip for " + level.name());
+        @Test
+        void roundTripsThroughItsBuilder() {
+            Config config = Config.builder("/tmp/db")
+                .numFlushThreads(3)
+                .numCompactionThreads(5)
+                .logLevel(LogLevel.WARN)
+                .blockCacheSize(1024)
+                .maxOpenSSTables(64)
+                .logToFile(true)
+                .logTruncationAt(2048)
+                .memtableWriteBufferSize(4096)
+                .memtableSkipListMaxLevel(16)
+                .memtableSkipListProbability(0.5f)
+                .memtableSyncMode(SyncMode.SYNC_FULL)
+                .memtableSyncIntervalUs(1000)
+                .valueSeparationThreshold(512)
+                .vlogSegmentSize(8192)
+                .memtableL0QueueStallThreshold(8)
+                .memtableIdleFlushSeconds(30)
+                .txnTimeoutSeconds(60)
+                .build();
+
+            assertEquals("/tmp/db", config.getDbPath());
+            assertEquals(3, config.getNumFlushThreads());
+            assertEquals(5, config.getNumCompactionThreads());
+            assertEquals(LogLevel.WARN, config.getLogLevel());
+            assertEquals(1024, config.getBlockCacheSize());
+            assertEquals(64, config.getMaxOpenSSTables());
+            assertTrue(config.isLogToFile());
+            assertEquals(2048, config.getLogTruncationAt());
+            assertEquals(4096, config.getMemtableWriteBufferSize());
+            assertEquals(16, config.getMemtableSkipListMaxLevel());
+            assertEquals(0.5f, config.getMemtableSkipListProbability());
+            assertEquals(SyncMode.SYNC_FULL, config.getMemtableSyncMode());
+            assertEquals(1000, config.getMemtableSyncIntervalUs());
+            assertEquals(512, config.getValueSeparationThreshold());
+            assertEquals(8192, config.getVlogSegmentSize());
+            assertEquals(8, config.getMemtableL0QueueStallThreshold());
+            assertEquals(30, config.getMemtableIdleFlushSeconds());
+            assertEquals(60, config.getTxnTimeoutSeconds());
+
+            Config copy = config.toBuilder().build();
+            assertEquals(config.toString(), copy.toString());
+        }
+
+        @Test
+        void rejectsNegativeAndNullFields() {
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder(null).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").numFlushThreads(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").numCompactionThreads(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").blockCacheSize(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").maxOpenSSTables(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").logTruncationAt(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableWriteBufferSize(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").valueSeparationThreshold(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").vlogSegmentSize(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableL0QueueStallThreshold(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableIdleFlushSeconds(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").txnTimeoutSeconds(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").logLevel(null).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableSyncMode(null).build());
+        }
+
+        @Test
+        void boundsSkipListProbability() {
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableSkipListProbability(-0.1f).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableSkipListProbability(1.1f).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> Config.builder("/tmp/db").memtableSkipListProbability(Float.NaN).build());
+            assertDoesNotThrow(
+                () -> Config.builder("/tmp/db").memtableSkipListProbability(0.25f).build());
         }
     }
 
-    @Test
-    void isolationLevel_fromValue_invalidValueThrows() {
-        assertThatThrownBy(() -> IsolationLevel.fromValue(-99))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("-99");
-    }
+    @Nested
+    class FamilyConfig {
 
-    // -----------------------------------------------------------------------
-    // LogLevel enum
-    // -----------------------------------------------------------------------
+        @Test
+        void carriesTheNativeDefaults() {
+            ColumnFamilyConfig config = ColumnFamilyConfig.defaultConfig();
 
-    @Test
-    void logLevel_values() {
-        assertEquals(0, LogLevel.DEBUG.getValue());
-        assertEquals(1, LogLevel.INFO.getValue());
-        assertEquals(2, LogLevel.WARN.getValue());
-        assertEquals(3, LogLevel.ERROR.getValue());
-        assertEquals(4, LogLevel.FATAL.getValue());
-        assertEquals(99, LogLevel.NONE.getValue());
-    }
+            assertTrue(config.getLevelSizeRatio() > 0);
+            assertTrue(config.getBtreeKlogBlockSize() > 0);
+            assertNotNull(config.getEncodingPipeline());
+            assertNotNull(config.getDefaultIsolationLevel());
+            assertNotNull(config.getName());
+            assertNotNull(config.toString());
+        }
 
-    @Test
-    void logLevel_fromValue_roundTripsAllValues() {
-        for (LogLevel level : LogLevel.values()) {
-            assertEquals(level, LogLevel.fromValue(level.getValue()),
-                "fromValue should round-trip for " + level.name());
+        @Test
+        void roundTripsThroughItsBuilder() {
+            ColumnFamilyConfig config = ColumnFamilyConfig.builder()
+                .levelSizeRatio(12)
+                .minLevels(2)
+                .dividingLevelOffset(1)
+                .keepValuesInline(true)
+                .btreeKlogBlockSize(8192)
+                .encodingPipeline(CompressionAlgorithm.LZ4, CompressionAlgorithm.ZSTD)
+                .enableBloomFilter(true)
+                .bloomFpr(0.02)
+                .defaultIsolationLevel(IsolationLevel.SERIALIZABLE)
+                .l1FileCountTrigger(6)
+                .tombstoneDensityTrigger(0.4)
+                .tombstoneDensityMinEntries(1000)
+                .build();
+
+            assertEquals(12, config.getLevelSizeRatio());
+            assertEquals(2, config.getMinLevels());
+            assertEquals(1, config.getDividingLevelOffset());
+            assertTrue(config.isKeepValuesInline());
+            assertEquals(8192, config.getBtreeKlogBlockSize());
+            assertArrayEquals(new int[]{2, 3}, config.getEncodingPipeline());
+            assertTrue(config.isEnableBloomFilter());
+            assertEquals(0.02, config.getBloomFpr(), 1e-9);
+            assertEquals(IsolationLevel.SERIALIZABLE, config.getDefaultIsolationLevel());
+            assertEquals(6, config.getL1FileCountTrigger());
+            assertEquals(0.4, config.getTombstoneDensityTrigger(), 1e-9);
+            assertEquals(1000, config.getTombstoneDensityMinEntries());
+
+            ColumnFamilyConfig copy = config.toBuilder().build();
+            assertEquals(config.toString(), copy.toString());
+        }
+
+        @Test
+        void treatsNoCompressionAsAnEmptyPipeline() {
+            assertArrayEquals(new int[0], ColumnFamilyConfig.builder()
+                .compression(CompressionAlgorithm.NONE).build().getEncodingPipeline());
+            assertArrayEquals(new int[]{CompressionAlgorithm.SNAPPY.getValue()},
+                ColumnFamilyConfig.builder()
+                    .compression(CompressionAlgorithm.SNAPPY).build().getEncodingPipeline());
+        }
+
+        @Test
+        void acceptsRawEncodingIds() {
+            ColumnFamilyConfig config =
+                ColumnFamilyConfig.builder().encodingPipelineIds(2, 3).build();
+            assertArrayEquals(new int[]{2, 3}, config.getEncodingPipeline());
+
+            assertArrayEquals(new int[0],
+                ColumnFamilyConfig.builder().encodingPipelineIds().build().getEncodingPipeline());
+        }
+
+        @Test
+        void copiesThePipelineOnTheWayInAndOut() {
+            int[] source = {2, 3};
+            ColumnFamilyConfig config =
+                ColumnFamilyConfig.builder().encodingPipelineIds(source).build();
+
+            source[0] = 99;
+            assertArrayEquals(new int[]{2, 3}, config.getEncodingPipeline(),
+                "the builder took a copy");
+
+            int[] returned = config.getEncodingPipeline();
+            returned[0] = 99;
+            assertArrayEquals(new int[]{2, 3}, config.getEncodingPipeline(),
+                "the getter returned a copy");
+        }
+
+        @Test
+        void boundsThePipelineLength() {
+            int[] tooMany = new int[ColumnFamilyConfig.MAX_ENCODING_PIPELINE + 1];
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().encodingPipelineIds(tooMany).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().encodingPipelineIds(256).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().encodingPipelineIds(-1).build());
+        }
+
+        @Test
+        void rejectsInvalidFields() {
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().bloomFpr(-0.1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().bloomFpr(1.0).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().bloomFpr(Double.NaN).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().tombstoneDensityTrigger(1.5).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().minLevels(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().l1FileCountTrigger(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().defaultIsolationLevel(null).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().compression(null).build());
+        }
+
+        @Test
+        void boundsTheName() {
+            StringBuilder tooLong = new StringBuilder();
+            for (int i = 0; i < ColumnFamilyConfig.MAX_NAME_LENGTH; i++) {
+                tooLong.append('x');
+            }
+            assertThrows(IllegalArgumentException.class,
+                () -> ColumnFamilyConfig.builder().name(tooLong.toString()).build());
+            assertEquals("", ColumnFamilyConfig.builder().name(null).build().getName());
         }
     }
 
-    @Test
-    void logLevel_fromValue_invalidValueThrows() {
-        assertThatThrownBy(() -> LogLevel.fromValue(42))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("42");
-    }
+    @Nested
+    class ValueTypes {
 
-    // -----------------------------------------------------------------------
-    // SyncMode enum
-    // -----------------------------------------------------------------------
+        @Test
+        void commitOpCarriesItsFields() {
+            byte[] key = "k".getBytes(StandardCharsets.UTF_8);
+            byte[] value = "v".getBytes(StandardCharsets.UTF_8);
 
-    @Test
-    void syncMode_values() {
-        assertEquals(0, SyncMode.SYNC_NONE.getValue());
-        assertEquals(1, SyncMode.SYNC_FULL.getValue());
-        assertEquals(2, SyncMode.SYNC_INTERVAL.getValue());
-    }
+            CommitOp put = new CommitOp(key, value, 12345L, false);
+            assertArrayEquals(key, put.getKey());
+            assertArrayEquals(value, put.getValue());
+            assertEquals(12345L, put.getTtl());
+            assertFalse(put.isDelete());
 
-    @Test
-    void syncMode_fromValue_roundTripsAllValues() {
-        for (SyncMode mode : SyncMode.values()) {
-            assertEquals(mode, SyncMode.fromValue(mode.getValue()),
-                "fromValue should round-trip for " + mode.name());
+            CommitOp delete = new CommitOp(key, null, -1L, true);
+            assertNull(delete.getValue());
+            assertTrue(delete.isDelete());
+        }
+
+        @Test
+        void keyValueCarriesBothHalves() {
+            byte[] key = {1, 2};
+            byte[] value = {3, 4};
+            KeyValue kv = new KeyValue(key, value);
+            assertArrayEquals(key, kv.getKey());
+            assertArrayEquals(value, kv.getValue());
+        }
+
+        @Test
+        void cacheStatsCarriesItsFields() {
+            CacheStats stats = new CacheStats(true, 10, 2048, 7, 3, 0.7, 8);
+            assertTrue(stats.isEnabled());
+            assertEquals(10, stats.getTotalEntries());
+            assertEquals(2048, stats.getTotalBytes());
+            assertEquals(7, stats.getHits());
+            assertEquals(3, stats.getMisses());
+            assertEquals(0.7, stats.getHitRate(), 1e-9);
+            assertEquals(8, stats.getNumPartitions());
+            assertNotNull(stats.toString());
+        }
+
+        @Test
+        void stallStatsIsIndexedByReason() {
+            StallStat[] reasons = new StallStat[StallReason.values().length];
+            for (int i = 0; i < reasons.length; i++) {
+                reasons[i] = new StallStat(i, i * 10L, i * 100L);
+            }
+            StallStats stats = new StallStats(reasons);
+
+            assertEquals(0, stats.get(StallReason.WAL_APPEND).getCount());
+            assertEquals(StallReason.MANIFEST_COMMIT.getValue(),
+                stats.get(StallReason.MANIFEST_COMMIT).getCount());
+            assertEquals(reasons.length, stats.getReasons().length);
+            assertNotNull(stats.toString());
+
+            long expectedTotal = 0;
+            for (StallStat r : reasons) {
+                expectedTotal += r.getTotalUs();
+            }
+            assertEquals(expectedTotal, stats.getTotalUs());
+        }
+
+        @Test
+        void stallStatsRejectsAMissizedArray() {
+            assertThrows(IllegalArgumentException.class, () -> new StallStats(null));
+            assertThrows(IllegalArgumentException.class,
+                () -> new StallStats(new StallStat[]{new StallStat(0, 0, 0)}));
+        }
+
+        @Test
+        void ioStatsIsIndexedByClass() {
+            IoStat[] classes = new IoStat[IoClass.values().length];
+            for (int i = 0; i < classes.length; i++) {
+                classes[i] = new IoStat(i, i * 1000L, i * 10L, i);
+            }
+            IoStats stats = new IoStats(classes);
+
+            assertEquals(0, stats.get(IoClass.SSTABLE).getOps());
+            assertEquals(IoClass.VLOG.getValue(), stats.get(IoClass.VLOG).getOps());
+            assertEquals(classes.length, stats.getClasses().length);
+            assertNotNull(stats.toString());
+        }
+
+        @Test
+        void ioStatComputesThroughput() {
+            assertEquals(0.0, new IoStat(0, 0, 0, 0).getBytesPerSecond(), 1e-9);
+            assertEquals(1_000_000.0, new IoStat(1, 1_000_000, 1_000_000, 1).getBytesPerSecond(),
+                1e-6);
+        }
+
+        @Test
+        void ioStatsRejectsAMissizedArray() {
+            assertThrows(IllegalArgumentException.class, () -> new IoStats(null));
+            assertThrows(IllegalArgumentException.class,
+                () -> new IoStats(new IoStat[]{new IoStat(0, 0, 0, 0)}));
+        }
+
+        @Test
+        void encodingStatsComputesItsRatio() {
+            EncodingStats stats = new EncodingStats(new int[]{2}, 1000, 250, 4);
+            assertArrayEquals(new int[]{2}, stats.getIds());
+            assertEquals(1000, stats.getLogicalBytes());
+            assertEquals(250, stats.getStoredBytes());
+            assertEquals(4, stats.getItemCount());
+            assertEquals(4.0, stats.getRatio(), 1e-9);
+            assertNotNull(stats.toString());
+
+            assertEquals(0.0, new EncodingStats(null, 100, 0, 0).getRatio(), 1e-9,
+                "nothing stored means no ratio to report");
+            assertArrayEquals(new int[0], new EncodingStats(null, 0, 0, 0).getIds());
+        }
+
+        @Test
+        void rangeStatsCarriesItsFields() {
+            RangeStats exact = new RangeStats(3, 500, true);
+            assertEquals(3, exact.getSstablesOverlapping());
+            assertEquals(500, exact.getEstimatedKeys());
+            assertTrue(exact.isKeysExact());
+            assertNotNull(exact.toString());
+
+            assertFalse(new RangeStats(9, 100_000, false).isKeysExact());
+        }
+
+        @Test
+        void preparedTransactionCopiesItsXid() {
+            byte[] xid = {1, 2, 3};
+            PreparedTransaction prepared = new PreparedTransaction(null, xid);
+
+            xid[0] = 99;
+            assertArrayEquals(new byte[]{1, 2, 3}, prepared.getXid(),
+                "the constructor holds the array it was given, and the getter copies it");
+
+            byte[] returned = prepared.getXid();
+            returned[0] = 99;
+            assertArrayEquals(new byte[]{1, 2, 3}, prepared.getXid());
+
+            assertNull(prepared.getTransaction());
+            assertArrayEquals(new byte[0], new PreparedTransaction(null, null).getXid());
+            assertNotNull(prepared.toString());
+        }
+
+        @Test
+        void cfStatsCopiesItsLevelArrays() {
+            long[] sizes = new long[CfStats.MAX_LEVELS];
+            sizes[0] = 100;
+            CfStats stats = new CfStats(1, null, sizes, new int[CfStats.MAX_LEVELS],
+                new long[CfStats.MAX_LEVELS], new long[CfStats.MAX_LEVELS], 10, 100, 1.0, 2.0, 1.0,
+                5, 2, 2.0, 0, 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            sizes[0] = 999;
+            assertEquals(100, stats.getLevelSizes()[0], "the constructor took a copy");
+
+            long[] returned = stats.getLevelSizes();
+            returned[0] = 999;
+            assertEquals(100, stats.getLevelSizes()[0], "the getter returned a copy");
+
+            assertEquals(1, stats.getNumLevels());
+            assertEquals(10, stats.getTotalKeys());
+            assertNotNull(stats.toString());
         }
     }
 
-    @Test
-    void syncMode_fromValue_invalidValueThrows() {
-        assertThatThrownBy(() -> SyncMode.fromValue(-1))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("-1");
+    @Nested
+    class Exceptions {
+
+        @Test
+        void carriesACodeAndADescription() {
+            TidesDBException e = new TidesDBException("boom", TidesDBException.ERR_IO);
+            assertEquals(TidesDBException.ERR_IO, e.getErrorCode());
+            assertEquals("boom", e.getMessage());
+            assertEquals("I/O error", e.getErrorMessage());
+        }
+
+        @Test
+        void defaultsToUnknown() {
+            assertEquals(TidesDBException.ERR_UNKNOWN,
+                new TidesDBException("boom").getErrorCode());
+            assertEquals(TidesDBException.ERR_UNKNOWN,
+                new TidesDBException("boom", new RuntimeException()).getErrorCode());
+        }
+
+        @Test
+        void keepsItsCause() {
+            RuntimeException cause = new RuntimeException("root");
+            TidesDBException e = new TidesDBException("boom", TidesDBException.ERR_IO, cause);
+            assertSame(cause, e.getCause());
+            assertEquals(TidesDBException.ERR_IO, e.getErrorCode());
+        }
+
+        @Test
+        void describesEveryCode() {
+            int[] codes = {
+                TidesDBException.ERR_SUCCESS, TidesDBException.ERR_MEMORY,
+                TidesDBException.ERR_INVALID_ARGS, TidesDBException.ERR_NOT_FOUND,
+                TidesDBException.ERR_IO, TidesDBException.ERR_CORRUPTION,
+                TidesDBException.ERR_EXISTS, TidesDBException.ERR_CONFLICT,
+                TidesDBException.ERR_TOO_LARGE, TidesDBException.ERR_MEMORY_LIMIT,
+                TidesDBException.ERR_INVALID_DB, TidesDBException.ERR_UNKNOWN,
+                TidesDBException.ERR_LOCKED, TidesDBException.ERR_READONLY,
+                TidesDBException.ERR_TXN_EXPIRED, TidesDBException.ERR_NO_SPACE,
+                TidesDBException.ERR_TXN_ABORTED, TidesDBException.ERR_TOO_OLD};
+
+            for (int code : codes) {
+                String message = new TidesDBException("x", code).getErrorMessage();
+                assertNotNull(message);
+                assertFalse(message.isEmpty());
+            }
+            assertEquals("unknown error", new TidesDBException("x", -999).getErrorMessage());
+        }
+
+        @Test
+        void identifiesTheRetryableCode() {
+            assertTrue(new TidesDBException("x", TidesDBException.ERR_LOCKED).isRetryable());
+            assertFalse(new TidesDBException("x", TidesDBException.ERR_CONFLICT).isRetryable());
+            assertFalse(new TidesDBException("x", TidesDBException.ERR_IO).isRetryable());
+        }
+
+        @Test
+        void errorCodesMatchTheNativeNumbering() {
+            assertEquals(0, TidesDBException.ERR_SUCCESS);
+            assertEquals(-1, TidesDBException.ERR_MEMORY);
+            assertEquals(-2, TidesDBException.ERR_INVALID_ARGS);
+            assertEquals(-3, TidesDBException.ERR_NOT_FOUND);
+            assertEquals(-4, TidesDBException.ERR_IO);
+            assertEquals(-5, TidesDBException.ERR_CORRUPTION);
+            assertEquals(-6, TidesDBException.ERR_EXISTS);
+            assertEquals(-7, TidesDBException.ERR_CONFLICT);
+            assertEquals(-8, TidesDBException.ERR_TOO_LARGE);
+            assertEquals(-9, TidesDBException.ERR_MEMORY_LIMIT);
+            assertEquals(-10, TidesDBException.ERR_INVALID_DB);
+            assertEquals(-11, TidesDBException.ERR_UNKNOWN);
+            assertEquals(-12, TidesDBException.ERR_LOCKED);
+            assertEquals(-13, TidesDBException.ERR_READONLY);
+            assertEquals(-14, TidesDBException.ERR_TXN_EXPIRED);
+            assertEquals(-15, TidesDBException.ERR_NO_SPACE);
+            assertEquals(-16, TidesDBException.ERR_TXN_ABORTED);
+            assertEquals(-17, TidesDBException.ERR_TOO_OLD);
+        }
     }
 
-    // -----------------------------------------------------------------------
-    // Config.Builder validation
-    // -----------------------------------------------------------------------
+    @Nested
+    class NativeStatics {
 
-    @Test
-    void configBuilder_nullDbPathThrows() {
-        assertThatThrownBy(() -> Config.builder(null).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Database path");
-    }
+        @Test
+        void reportsWhichCompressionBackendsAreLinkedIn() {
+            assertTrue(TidesDB.isCompressionAvailable(CompressionAlgorithm.NONE),
+                "no-compression is always available");
+            for (CompressionAlgorithm algo : CompressionAlgorithm.values()) {
+                assertDoesNotThrow(() -> TidesDB.isCompressionAvailable(algo));
+            }
+            assertThrows(IllegalArgumentException.class,
+                () -> TidesDB.isCompressionAvailable(null));
+        }
 
-    @Test
-    void configBuilder_numFlushThreadsZeroOrNegativeThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).numFlushThreads(0).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("flush threads");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).numFlushThreads(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("flush threads");
-    }
+        @Test
+        void describesResultCodes() {
+            assertNotNull(TidesDB.strerror(TidesDBException.ERR_SUCCESS));
+            assertNotNull(TidesDB.strerror(TidesDBException.ERR_NOT_FOUND));
+            assertNotNull(TidesDB.strerror(-999), "an unrecognised code still describes itself");
+        }
 
-    @Test
-    void configBuilder_numCompactionThreadsZeroOrNegativeThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).numCompactionThreads(0).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("compaction threads");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).numCompactionThreads(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("compaction threads");
-    }
+        @Test
+        void reportsTheOpenFileCeiling() {
+            assertTrue(TidesDB.raiseOpenFileLimit(0) > 0);
+        }
 
-    @Test
-    void configBuilder_nullLogLevelThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).logLevel(null).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Log level");
-    }
-
-    @Test
-    void configBuilder_negativeBlockCacheSizeThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).blockCacheSize(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Block cache size");
-    }
-
-    @Test
-    void configBuilder_zeroOrNegativeMaxOpenSSTablesThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).maxOpenSSTables(0).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Max open SSTables");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).maxOpenSSTables(-5).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Max open SSTables");
-    }
-
-    @Test
-    void configBuilder_negativeMaxConcurrentFlushesThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).maxConcurrentFlushes(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("maxConcurrentFlushes");
-    }
-
-    @Test
-    void configBuilder_negativeUnifiedMemtableSkipListMaxLevelThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSkipListMaxLevel(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSkipListMaxLevel");
-    }
-
-    @Test
-    void configBuilder_negativeUnifiedMemtableSyncModeThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSyncMode(-1).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSyncMode");
-    }
-
-    @Test
-    void configBuilder_unifiedMemtableSkipListProbabilityOutOfRangeThrows(@TempDir Path dir) {
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSkipListProbability(-0.1f).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSkipListProbability");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSkipListProbability(1.1f).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSkipListProbability");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSkipListProbability(Float.NaN).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSkipListProbability");
-        assertThatThrownBy(() -> Config.builder(dir.toString()).unifiedMemtableSkipListProbability(Float.POSITIVE_INFINITY).build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("unifiedMemtableSkipListProbability");
-    }
-
-    @Test
-    void configBuilder_validBoundaryValuesAccepted(@TempDir Path dir) {
-        assertDoesNotThrow(() -> Config.builder(dir.toString())
-            .numFlushThreads(1)
-            .numCompactionThreads(1)
-            .maxOpenSSTables(1)
-            .blockCacheSize(0)
-            .logTruncationAt(0)
-            .maxMemoryUsage(0)
-            .maxConcurrentFlushes(0)
-            .unifiedMemtableSkipListProbability(0.0f)
-            .build());
-
-        assertDoesNotThrow(() -> Config.builder(dir.toString())
-            .unifiedMemtableSkipListProbability(1.0f)
-            .build());
-    }
-
-    @Test
-    void configBuilder_settersPreserveValues(@TempDir Path dir) {
-        Config config = Config.builder(dir.toString())
-            .numFlushThreads(8)
-            .numCompactionThreads(4)
-            .logLevel(LogLevel.ERROR)
-            .blockCacheSize(1024)
-            .maxOpenSSTables(128)
-            .logToFile(true)
-            .logTruncationAt(1234)
-            .maxMemoryUsage(9999)
-            .unifiedMemtable(true)
-            .unifiedMemtableWriteBufferSize(512)
-            .unifiedMemtableSkipListMaxLevel(6)
-            .unifiedMemtableSkipListProbability(0.5f)
-            .unifiedMemtableSyncMode(1)
-            .unifiedMemtableSyncIntervalUs(500)
-            .objectStoreFsPath("/some/path")
-            .maxConcurrentFlushes(3)
-            .finishCompactionsOnClose(true)
-            .build();
-
-        assertEquals(8, config.getNumFlushThreads());
-        assertEquals(4, config.getNumCompactionThreads());
-        assertEquals(LogLevel.ERROR, config.getLogLevel());
-        assertEquals(1024, config.getBlockCacheSize());
-        assertEquals(128, config.getMaxOpenSSTables());
-        assertTrue(config.isLogToFile());
-        assertEquals(1234, config.getLogTruncationAt());
-        assertEquals(9999, config.getMaxMemoryUsage());
-        assertTrue(config.isUnifiedMemtable());
-        assertEquals(512, config.getUnifiedMemtableWriteBufferSize());
-        assertEquals(6, config.getUnifiedMemtableSkipListMaxLevel());
-        assertEquals(0.5f, config.getUnifiedMemtableSkipListProbability(), 1e-6);
-        assertEquals(1, config.getUnifiedMemtableSyncMode());
-        assertEquals(500, config.getUnifiedMemtableSyncIntervalUs());
-        assertEquals("/some/path", config.getObjectStoreFsPath());
-        assertEquals(3, config.getMaxConcurrentFlushes());
-        assertTrue(config.isFinishCompactionsOnClose());
-    }
-
-    // -----------------------------------------------------------------------
-    // ColumnFamilyConfig.Builder validation
-    // -----------------------------------------------------------------------
-
-    @Test
-    void columnFamilyConfigBuilder_settersPreserveValues() {
-        ColumnFamilyConfig config = ColumnFamilyConfig.builder()
-            .writeBufferSize(64 * 1024)
-            .levelSizeRatio(5)
-            .minLevels(3)
-            .dividingLevelOffset(1)
-            .klogValueThreshold(256)
-            .compressionAlgorithm(CompressionAlgorithm.ZSTD_COMPRESSION)
-            .enableBloomFilter(false)
-            .bloomFPR(0.05)
-            .enableBlockIndexes(false)
-            .indexSampleRatio(4)
-            .blockIndexPrefixLen(32)
-            .syncMode(SyncMode.SYNC_NONE)
-            .syncIntervalUs(5000)
-            .comparatorName("my_cmp")
-            .skipListMaxLevel(8)
-            .skipListProbability(0.5f)
-            .defaultIsolationLevel(IsolationLevel.SNAPSHOT)
-            .minDiskSpace(1024)
-            .l1FileCountTrigger(8)
-            .l0QueueStallThreshold(10)
-            .tombstoneDensityTrigger(0.3)
-            .tombstoneDensityMinEntries(512)
-            .useBtree(true)
-            .objectLazyCompaction(true)
-            .objectPrefetchCompaction(false)
-            .build();
-
-        assertEquals(64 * 1024, config.getWriteBufferSize());
-        assertEquals(5, config.getLevelSizeRatio());
-        assertEquals(3, config.getMinLevels());
-        assertEquals(1, config.getDividingLevelOffset());
-        assertEquals(256, config.getKlogValueThreshold());
-        assertEquals(CompressionAlgorithm.ZSTD_COMPRESSION, config.getCompressionAlgorithm());
-        assertFalse(config.isEnableBloomFilter());
-        assertEquals(0.05, config.getBloomFPR(), 1e-9);
-        assertFalse(config.isEnableBlockIndexes());
-        assertEquals(4, config.getIndexSampleRatio());
-        assertEquals(32, config.getBlockIndexPrefixLen());
-        assertEquals(SyncMode.SYNC_NONE, config.getSyncMode());
-        assertEquals(5000, config.getSyncIntervalUs());
-        assertEquals("my_cmp", config.getComparatorName());
-        assertEquals(8, config.getSkipListMaxLevel());
-        assertEquals(0.5f, config.getSkipListProbability(), 1e-6);
-        assertEquals(IsolationLevel.SNAPSHOT, config.getDefaultIsolationLevel());
-        assertEquals(1024, config.getMinDiskSpace());
-        assertEquals(8, config.getL1FileCountTrigger());
-        assertEquals(10, config.getL0QueueStallThreshold());
-        assertEquals(0.3, config.getTombstoneDensityTrigger(), 1e-9);
-        assertEquals(512, config.getTombstoneDensityMinEntries());
-        assertTrue(config.isUseBtree());
-        assertTrue(config.isObjectLazyCompaction());
-        assertFalse(config.isObjectPrefetchCompaction());
-    }
-
-    // -----------------------------------------------------------------------
-    // ObjectStoreConfig.Builder
-    // -----------------------------------------------------------------------
-
-    @Test
-    void objectStoreConfigBuilder_settersPreserveValues() {
-        ObjectStoreConfig config = ObjectStoreConfig.builder()
-            .localCachePath("/cache")
-            .localCacheMaxBytes(1024)
-            .cacheOnRead(false)
-            .cacheOnWrite(false)
-            .maxConcurrentUploads(2)
-            .maxConcurrentDownloads(16)
-            .multipartThreshold(1024 * 1024)
-            .multipartPartSize(256 * 1024)
-            .syncManifestToObject(false)
-            .replicateWal(false)
-            .walUploadSync(true)
-            .walSyncThresholdBytes(2048)
-            .walSyncOnCommit(true)
-            .replicaMode(true)
-            .replicaSyncIntervalUs(1000)
-            .replicaReplayWal(false)
-            .build();
-
-        assertEquals("/cache", config.getLocalCachePath());
-        assertEquals(1024, config.getLocalCacheMaxBytes());
-        assertFalse(config.isCacheOnRead());
-        assertFalse(config.isCacheOnWrite());
-        assertEquals(2, config.getMaxConcurrentUploads());
-        assertEquals(16, config.getMaxConcurrentDownloads());
-        assertEquals(1024 * 1024, config.getMultipartThreshold());
-        assertEquals(256 * 1024, config.getMultipartPartSize());
-        assertFalse(config.isSyncManifestToObject());
-        assertFalse(config.isReplicateWal());
-        assertTrue(config.isWalUploadSync());
-        assertEquals(2048, config.getWalSyncThresholdBytes());
-        assertTrue(config.isWalSyncOnCommit());
-        assertTrue(config.isReplicaMode());
-        assertEquals(1000, config.getReplicaSyncIntervalUs());
-        assertFalse(config.isReplicaReplayWal());
-    }
-
-    @Test
-    void objectStoreConfigBuilder_defaultValues() {
-        ObjectStoreConfig config = ObjectStoreConfig.builder().build();
-        assertNull(config.getLocalCachePath());
-        assertEquals(0, config.getLocalCacheMaxBytes());
-        assertTrue(config.isCacheOnRead());
-        assertTrue(config.isCacheOnWrite());
-        assertEquals(4, config.getMaxConcurrentUploads());
-        assertEquals(8, config.getMaxConcurrentDownloads());
-        assertEquals(64 * 1024 * 1024, config.getMultipartThreshold());
-        assertEquals(8 * 1024 * 1024, config.getMultipartPartSize());
-        assertTrue(config.isSyncManifestToObject());
-        assertTrue(config.isReplicateWal());
-        assertFalse(config.isWalUploadSync());
-        assertEquals(1048576, config.getWalSyncThresholdBytes());
-        assertFalse(config.isWalSyncOnCommit());
-        assertFalse(config.isReplicaMode());
-        assertEquals(5000000, config.getReplicaSyncIntervalUs());
-        assertTrue(config.isReplicaReplayWal());
-    }
-
-    // -----------------------------------------------------------------------
-    // S3Config.Builder
-    // -----------------------------------------------------------------------
-
-    @Test
-    void s3ConfigBuilder_emptyRequiredFieldsThrow() {
-        assertThatThrownBy(() -> S3Config.builder().endpoint("").bucket("b").accessKey("ak").secretKey("sk").build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("endpoint");
-        assertThatThrownBy(() -> S3Config.builder().endpoint("e").bucket("").accessKey("ak").secretKey("sk").build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("bucket");
-        assertThatThrownBy(() -> S3Config.builder().endpoint("e").bucket("b").accessKey("").secretKey("sk").build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("access key");
-        assertThatThrownBy(() -> S3Config.builder().endpoint("e").bucket("b").accessKey("ak").secretKey("").build())
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("secret key");
-    }
-
-    @Test
-    void s3ConfigBuilder_defaultOptionalFields() {
-        S3Config config = S3Config.builder()
-            .endpoint("s3.example.com")
-            .bucket("my-bucket")
-            .accessKey("AK")
-            .secretKey("SK")
-            .build();
-
-        assertNull(config.getPrefix());
-        assertNull(config.getRegion());
-        assertTrue(config.isUseSsl());
-        assertFalse(config.isUsePathStyle());
-        assertNull(config.getTlsCaPath());
-        assertFalse(config.isTlsInsecureSkipVerify());
-        assertEquals(0, config.getMultipartThreshold());
-        assertEquals(0, config.getMultipartPartSize());
-    }
-
-    @Test
-    void s3ConfigBuilder_allFieldsSet() {
-        S3Config config = S3Config.builder()
-            .endpoint("minio.local:9000")
-            .bucket("test-bucket")
-            .prefix("prefix/")
-            .accessKey("access")
-            .secretKey("secret")
-            .region("eu-west-1")
-            .useSsl(false)
-            .usePathStyle(true)
-            .tlsCaPath("/etc/ssl/ca.pem")
-            .tlsInsecureSkipVerify(true)
-            .multipartThreshold(5 * 1024 * 1024)
-            .multipartPartSize(1024 * 1024)
-            .build();
-
-        assertEquals("minio.local:9000", config.getEndpoint());
-        assertEquals("test-bucket", config.getBucket());
-        assertEquals("prefix/", config.getPrefix());
-        assertEquals("access", config.getAccessKey());
-        assertEquals("secret", config.getSecretKey());
-        assertEquals("eu-west-1", config.getRegion());
-        assertFalse(config.isUseSsl());
-        assertTrue(config.isUsePathStyle());
-        assertEquals("/etc/ssl/ca.pem", config.getTlsCaPath());
-        assertTrue(config.isTlsInsecureSkipVerify());
-        assertEquals(5 * 1024 * 1024, config.getMultipartThreshold());
-        assertEquals(1024 * 1024, config.getMultipartPartSize());
-    }
-
-    // -----------------------------------------------------------------------
-    // Stats
-    // -----------------------------------------------------------------------
-
-    @Test
-    void stats_constructorAndGetters() {
-        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-        Stats stats = new Stats(
-            3, 1024,
-            new long[]{100, 200, 300}, new int[]{1, 2, 3},
-            cfConfig,
-            500, 600,
-            10.5, 20.5, new long[]{100, 200, 200},
-            1.5, 0.95,
-            false, 0, 0, 0.0,
-            10, 0.02, new long[]{5, 3, 2},
-            0.15, 2,
-            1000, 2000, 3000, 4000, 5000, 5, 10);
-
-        assertEquals(3, stats.getNumLevels());
-        assertEquals(1024, stats.getMemtableSize());
-        assertArrayEquals(new long[]{100, 200, 300}, stats.getLevelSizes());
-        assertArrayEquals(new int[]{1, 2, 3}, stats.getLevelNumSSTables());
-        assertNotNull(stats.getConfig());
-        assertEquals(500, stats.getTotalKeys());
-        assertEquals(600, stats.getTotalDataSize());
-        assertEquals(10.5, stats.getAvgKeySize(), 1e-9);
-        assertEquals(20.5, stats.getAvgValueSize(), 1e-9);
-        assertArrayEquals(new long[]{100, 200, 200}, stats.getLevelKeyCounts());
-        assertEquals(1.5, stats.getReadAmp(), 1e-9);
-        assertEquals(0.95, stats.getHitRate(), 1e-9);
-        assertFalse(stats.isUseBtree());
-        assertEquals(0, stats.getBtreeTotalNodes());
-        assertEquals(0, stats.getBtreeMaxHeight());
-        assertEquals(0.0, stats.getBtreeAvgHeight(), 1e-9);
-        assertEquals(10, stats.getTotalTombstones());
-        assertEquals(0.02, stats.getTombstoneRatio(), 1e-9);
-        assertArrayEquals(new long[]{5, 3, 2}, stats.getLevelTombstoneCounts());
-        assertEquals(0.15, stats.getMaxSstDensity(), 1e-9);
-        assertEquals(2, stats.getMaxSstDensityLevel());
-        assertEquals(1000, stats.getWalBytesWritten());
-        assertEquals(2000, stats.getFlushBytesWritten());
-        assertEquals(3000, stats.getCompactionBytesWritten());
-        assertEquals(4000, stats.getCompactionBytesRead());
-        assertEquals(5000, stats.getUserBytesWritten());
-        assertEquals(5, stats.getFlushCount());
-        assertEquals(10, stats.getCompactionCount());
-    }
-
-    @Test
-    void stats_toString_containsAllFields() {
-        Stats stats = new Stats(
-            2, 512,
-            new long[]{100, 200}, new int[]{1, 2},
-            ColumnFamilyConfig.defaultConfig(),
-            300, 400,
-            8.0, 16.0, new long[]{150, 150},
-            1.0, 0.9,
-            false, 0, 0, 0.0,
-            5, 0.01, new long[]{3, 2},
-            0.1, 1,
-            500, 1000, 1500, 2000, 2500, 3, 7);
-
-        String str = stats.toString();
-        assertThat(str).contains("numLevels=2");
-        assertThat(str).contains("memtableSize=512");
-        assertThat(str).contains("totalKeys=300");
-        assertThat(str).contains("totalDataSize=400");
-        assertThat(str).contains("readAmp=");
-        assertThat(str).contains("hitRate=");
-        assertThat(str).contains("useBtree=false");
-        assertThat(str).contains("totalTombstones=5");
-        assertThat(str).contains("tombstoneRatio=");
-        assertThat(str).contains("levelSizes=[");
-        assertThat(str).contains("levelNumSSTables=[");
-        assertThat(str).contains("levelKeyCounts=[");
-        assertThat(str).contains("levelTombstoneCounts=[");
-    }
-
-    @Test
-    void stats_toString_nullArraysOmitted() {
-        Stats stats = new Stats(
-            0, 0, null, null, ColumnFamilyConfig.defaultConfig(),
-            0, 0, 0, 0, null, 0, 0,
-            false, 0, 0, 0.0,
-            0, 0, null, 0, 0,
-            0, 0, 0, 0, 0, 0, 0);
-
-        String str = stats.toString();
-        assertThat(str).doesNotContain("levelSizes=");
-        assertThat(str).doesNotContain("levelNumSSTables=");
-        assertThat(str).doesNotContain("levelKeyCounts=");
-        assertThat(str).doesNotContain("levelTombstoneCounts=");
-    }
-
-    @Test
-    void stats_toString_btreeFieldsIncludedWhenEnabled() {
-        Stats stats = new Stats(
-            1, 0,
-            new long[0], new int[0],
-            ColumnFamilyConfig.defaultConfig(),
-            0, 0,
-            0, 0, new long[0],
-            0, 0,
-            true, 50, 5, 3.5,
-            0, 0, new long[0],
-            0, 0,
-            0, 0, 0, 0, 0, 0, 0);
-
-        String str = stats.toString();
-        assertThat(str).contains("useBtree=true");
-        assertThat(str).contains("btreeTotalNodes=50");
-        assertThat(str).contains("btreeMaxHeight=5");
-        assertThat(str).contains("btreeAvgHeight=3.5");
+        @Test
+        void loadsTheNativeLibrary() {
+            NativeLibrary.load();
+            assertTrue(NativeLibrary.isLoaded());
+        }
     }
 }

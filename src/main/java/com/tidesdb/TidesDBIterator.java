@@ -30,6 +30,12 @@ import java.io.Closeable;
  * and {@code close()} throw {@link IllegalStateException}. The {@link #isValid()}
  * method returns {@code false} on a freed iterator.
  *
+ * <p>A scan reaches the same SSTables a point read does, so every method here
+ * can fail with {@link TidesDBException#ERR_LOCKED} for the same reason and with
+ * the same remedy: the position did not move, nothing is wrong with the
+ * iterator, and the step should be retried. That is not the end of the range,
+ * which is what {@link #isValid()} reports.
+ *
  * <p>This class is not guaranteed to be thread-safe.
  */
 public class TidesDBIterator implements Closeable {

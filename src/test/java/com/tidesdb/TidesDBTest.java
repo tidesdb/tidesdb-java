@@ -18,3333 +18,1656 @@
  */
 package com.tidesdb;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for TidesDB Java bindings.
+ * Behavioural tests for the TidesDB Java binding against a live engine.
  */
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class TidesDBTest {
-    
+
     @TempDir
     Path tempDir;
-    
-    @Test
-    @Order(1)
-    void testOpenClose() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            assertNotNull(db);
-        }
+
+    private static byte[] b(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
     }
-    
-    @Test
-    @Order(2)
-    void testCreateDropColumnFamily() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb2").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            assertNotNull(cf);
-            assertEquals("test_cf", cf.getName());
-            
-            String[] families = db.listColumnFamilies();
-            assertTrue(families.length > 0);
-            
-            db.dropColumnFamily("test_cf");
-        }
+
+    private static String s(byte[] v) {
+        return v == null ? null : new String(v, StandardCharsets.UTF_8);
     }
-    
-    @Test
-    @Order(3)
-    void testTransactionPutGetDelete() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb3").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            byte[] key = "key".getBytes(StandardCharsets.UTF_8);
-            byte[] value = "value".getBytes(StandardCharsets.UTF_8);
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, key, value);
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, key);
-                assertNotNull(result);
-                assertArrayEquals(value, result);
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.delete(cf, key);
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(cf, key));
-            }
-        }
+
+    /** Opens a database under a fresh subdirectory, with logging off. */
+    private TidesDB open(String name) throws TidesDBException {
+        return TidesDB.open(Config.builder(tempDir.resolve(name).toString())
+            .logLevel(LogLevel.NONE)
+            .build());
     }
-    
-    @Test
-    @Order(4)
-    void testTransactionWithTTL() throws TidesDBException, InterruptedException {
-        Config config = Config.builder(tempDir.resolve("testdb4").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            byte[] key = "temp_key".getBytes(StandardCharsets.UTF_8);
-            byte[] value = "temp_value".getBytes(StandardCharsets.UTF_8);
-            
-            // Set TTL to 2 seconds from now
-            long ttl = Instant.now().getEpochSecond() + 2;
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, key, value, ttl);
-                txn.commit();
-            }
-            
-            // Verify key exists before expiration
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, key);
-                assertNotNull(result);
-                assertArrayEquals(value, result);
-            }
-            
-            Thread.sleep(3000);
-            
-            // Verify key is expired
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(cf, key));
-            }
-        }
+
+    /** Opens a database with one column family already created, and returns both. */
+    private TidesDB openWithCf(String name, String cfName) throws TidesDBException {
+        TidesDB db = open(name);
+        db.createColumnFamily(cfName, ColumnFamilyConfig.builder().build());
+        return db;
     }
-    
-    @Test
-    @Order(5)
-    void testMultiOperationTransaction() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb5").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Multiple operations in one transaction
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.put(cf, "key2".getBytes(), "value2".getBytes());
-                txn.put(cf, "key3".getBytes(), "value3".getBytes());
-                txn.commit();
-            }
-            
-            // Verify all keys exist
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 1; i <= 3; i++) {
-                    byte[] key = ("key" + i).getBytes();
-                    byte[] expectedValue = ("value" + i).getBytes();
-                    byte[] result = txn.get(cf, key);
-                    assertArrayEquals(expectedValue, result);
-                }
-            }
-        }
-    }
-    
-    @Test
-    @Order(6)
-    void testTransactionRollback() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb6").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            byte[] key = "rollback_key".getBytes();
-            byte[] value = "rollback_value".getBytes();
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, key, value);
-                txn.rollback();
-            }
-            
-            // Verify key does not exist
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(cf, key));
-            }
-        }
-    }
-    
-    @Test
-    @Order(7)
-    void testSavepoints() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb7").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                
-                txn.savepoint("sp1");
-                txn.put(cf, "key2".getBytes(), "value2".getBytes());
-                
-                // Rollback to savepoint -- key2 is discarded, key1 remains
-                txn.rollbackToSavepoint("sp1");
-                
-                // Add different operation after rollback
-                txn.put(cf, "key3".getBytes(), "value3".getBytes());
-                
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                // key1 should exist
-                assertNotNull(txn.get(cf, "key1".getBytes()));
-                
-                // key2 should not exist (rolled back)
-                assertThrows(TidesDBException.class, () -> txn.get(cf, "key2".getBytes()));
-                
-                // key3 should exist
-                assertNotNull(txn.get(cf, "key3".getBytes()));
-            }
-        }
-    }
-    
-    @Test
-    @Order(8)
-    void testIterator() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb8").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    String key = String.format("key%02d", i);
-                    String value = "value" + i;
-                    txn.put(cf, key.getBytes(), value.getBytes());
-                }
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    iter.seekToFirst();
-                    
-                    int count = 0;
-                    while (iter.isValid()) {
-                        byte[] key = iter.key();
-                        byte[] value = iter.value();
-                        assertNotNull(key);
-                        assertNotNull(value);
-                        count++;
-                        iter.next();
-                    }
-                    assertEquals(10, count);
-                }
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    iter.seekToLast();
-                    
-                    int count = 0;
-                    while (iter.isValid()) {
-                        byte[] key = iter.key();
-                        byte[] value = iter.value();
-                        assertNotNull(key);
-                        assertNotNull(value);
-                        count++;
-                        iter.prev();
-                    }
-                    assertEquals(10, count);
-                }
-            }
-        }
-    }
-    
-    @Test
-    @Order(9)
-    void testIsolationLevels() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb9").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            for (IsolationLevel level : IsolationLevel.values()) {
-                try (Transaction txn = db.beginTransaction(level)) {
-                    assertNotNull(txn);
-                }
-            }
-        }
-    }
-    
-    @Test
-    @Order(10)
-    void testColumnFamilyStats() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb10").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
-                }
-                txn.commit();
-            }
-            
-            Stats stats = cf.getStats();
-            assertNotNull(stats);
-            assertTrue(stats.getNumLevels() >= 0);
-            assertTrue(stats.getTotalKeys() >= 0);
-            assertTrue(stats.getTotalDataSize() >= 0);
-            assertTrue(stats.getAvgKeySize() >= 0);
-            assertTrue(stats.getAvgValueSize() >= 0);
-            assertTrue(stats.getReadAmp() >= 0);
-            assertTrue(stats.getHitRate() >= 0.0 && stats.getHitRate() <= 1.0);
-            assertFalse(stats.isUseBtree());
-        }
-    }
-    
-    @Test
-    @Order(11)
-    void testCacheStats() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb11").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            CacheStats stats = db.getCacheStats();
-            assertNotNull(stats);
-        }
-    }
-    
-    @Test
-    @Order(12)
-    void testCustomColumnFamilyConfig() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb12").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .writeBufferSize(128 * 1024 * 1024)
-                .levelSizeRatio(10)
-                .minLevels(5)
-                .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
-                .enableBloomFilter(true)
-                .bloomFPR(0.01)
-                .enableBlockIndexes(true)
-                .syncMode(SyncMode.SYNC_INTERVAL)
-                .syncIntervalUs(128000)
-                .defaultIsolationLevel(IsolationLevel.READ_COMMITTED)
-                .build();
-            
-            db.createColumnFamily("custom_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("custom_cf");
-            assertNotNull(cf);
-            assertEquals("custom_cf", cf.getName());
+
+    /** Writes one committed key/value pair. */
+    private static void write(TidesDB db, ColumnFamily cf, String key, String value)
+            throws TidesDBException {
+        try (Transaction txn = db.beginTransaction()) {
+            txn.put(cf, b(key), b(value));
+            txn.commit();
         }
     }
 
-    @Test
-    @Order(13)
-    void testBtreeColumnFamily() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb13").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .writeBufferSize(128 * 1024 * 1024)
-                .levelSizeRatio(10)
-                .minLevels(5)
-                .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
-                .enableBloomFilter(true)
-                .bloomFPR(0.01)
-                .enableBlockIndexes(true)
-                .syncMode(SyncMode.SYNC_FULL)
-                .useBtree(true)
-                .build();
-            
-            db.createColumnFamily("btree_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("btree_cf");
-            assertNotNull(cf);
-            assertEquals("btree_cf", cf.getName());
-            
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
-                }
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, "key50".getBytes());
-                assertNotNull(result);
-                assertArrayEquals("value50".getBytes(), result);
-            }
-            
-            Stats stats = cf.getStats();
-            assertNotNull(stats);
-            assertTrue(stats.isUseBtree());
-            assertTrue(stats.getBtreeTotalNodes() >= 0);
-            assertTrue(stats.getBtreeMaxHeight() >= 0);
-            assertTrue(stats.getBtreeAvgHeight() >= 0.0);
+    /** Reads one key back in its own transaction. */
+    private static String read(TidesDB db, ColumnFamily cf, String key) throws TidesDBException {
+        try (Transaction txn = db.beginTransaction()) {
+            String value = s(txn.get(cf, b(key)));
+            txn.rollback();
+            return value;
         }
     }
-    
-    @Test
-    @Order(14)
-    void testBtreeIterator() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb14").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .writeBufferSize(128 * 1024 * 1024)
-                .compressionAlgorithm(CompressionAlgorithm.LZ4_COMPRESSION)
-                .enableBloomFilter(true)
-                .useBtree(true)
-                .build();
-            
-            db.createColumnFamily("btree_iter_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("btree_iter_cf");
-            
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    String key = String.format("key%02d", i);
-                    String value = "value" + i;
-                    txn.put(cf, key.getBytes(), value.getBytes());
-                }
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    iter.seekToFirst();
-                    
-                    int count = 0;
-                    while (iter.isValid()) {
-                        byte[] key = iter.key();
-                        byte[] value = iter.value();
-                        assertNotNull(key);
-                        assertNotNull(value);
-                        count++;
-                        iter.next();
-                    }
-                    assertEquals(10, count);
-                }
+
+    @Nested
+    class Lifecycle {
+
+        @Test
+        void opensAndCloses() throws TidesDBException {
+            try (TidesDB db = open("open-close")) {
+                assertNotNull(db);
             }
         }
-    }
-    
-    @Test
-    @Order(15)
-    void testCloneColumnFamily() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb15").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("source_cf", cfConfig);
-            
-            ColumnFamily sourceCf = db.getColumnFamily("source_cf");
-            
-            // Insert data into source
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    txn.put(sourceCf, ("key" + i).getBytes(), ("value" + i).getBytes());
-                }
-                txn.commit();
-            }
-            
-            // Clone the column family
-            db.cloneColumnFamily("source_cf", "cloned_cf");
-            
-            // Verify clone exists
-            ColumnFamily clonedCf = db.getColumnFamily("cloned_cf");
-            assertNotNull(clonedCf);
-            assertEquals("cloned_cf", clonedCf.getName());
-            
-            // Verify both column families are listed
-            String[] families = db.listColumnFamilies();
-            assertTrue(families.length >= 2);
-            
-            // Verify data exists in clone
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    byte[] result = txn.get(clonedCf, ("key" + i).getBytes());
-                    assertNotNull(result);
-                    assertArrayEquals(("value" + i).getBytes(), result);
-                }
-            }
-            
-            // Verify independence: insert into clone, should not appear in source
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(clonedCf, "clone_only_key".getBytes(), "clone_only_value".getBytes());
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(sourceCf, "clone_only_key".getBytes()));
+
+        @Test
+        void closeIsIdempotent() throws TidesDBException {
+            TidesDB db = open("double-close");
+            db.close();
+            assertDoesNotThrow(db::close);
+        }
+
+        @Test
+        void operationsOnAClosedDatabaseThrow() throws TidesDBException {
+            TidesDB db = open("closed-guard");
+            db.close();
+            assertThrows(IllegalStateException.class, db::listColumnFamilies);
+            assertThrows(IllegalStateException.class, db::beginTransaction);
+            assertThrows(IllegalStateException.class, db::getDbStats);
+        }
+
+        @Test
+        void rejectsAMissingPath() {
+            assertThrows(IllegalArgumentException.class, () -> TidesDB.open(null));
+            assertThrows(IllegalArgumentException.class,
+                () -> TidesDB.open(Config.builder("").build()));
+        }
+
+        @Test
+        void refusesASecondHandleOnTheSameDirectory() throws TidesDBException {
+            try (TidesDB first = open("locked")) {
+                TidesDBException e = assertThrows(TidesDBException.class, () -> open("locked"));
+                assertEquals(TidesDBException.ERR_LOCKED, e.getErrorCode());
+                assertTrue(e.isRetryable());
             }
         }
-    }
-    
-    @Test
-    @Order(16)
-    void testCheckpoint() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb16").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Insert some data
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
-                }
-                txn.commit();
-            }
-            
-            // Create checkpoint
-            String checkpointDir = tempDir.resolve("testdb16_checkpoint").toString();
-            db.checkpoint(checkpointDir);
-            
-            // Open the checkpoint as a separate database and verify data
-            Config checkpointConfig = Config.builder(checkpointDir)
-                .numFlushThreads(2)
-                .numCompactionThreads(2)
-                .logLevel(LogLevel.INFO)
-                .blockCacheSize(64 * 1024 * 1024)
-                .maxOpenSSTables(256)
-                .build();
-            
-            try (TidesDB checkpointDb = TidesDB.open(checkpointConfig)) {
-                ColumnFamily checkpointCf = checkpointDb.getColumnFamily("test_cf");
-                assertNotNull(checkpointCf);
-                
-                try (Transaction txn = checkpointDb.beginTransaction()) {
-                    for (int i = 0; i < 10; i++) {
-                        byte[] result = txn.get(checkpointCf, ("key" + i).getBytes());
-                        assertNotNull(result);
-                        assertArrayEquals(("value" + i).getBytes(), result);
-                    }
-                }
-            }
-        }
-    }
-    
-    @Test
-    @Order(17)
-    void testCheckpointNullDir() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb16b").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            assertThrows(IllegalArgumentException.class, () -> db.checkpoint(null));
-            assertThrows(IllegalArgumentException.class, () -> db.checkpoint(""));
-        }
-    }
-    
-    @Test
-    @Order(18)
-    void testTransactionPutGetDeleteBadKey() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb3").toString())
-                .numFlushThreads(2)
-                .numCompactionThreads(2)
-                .logLevel(LogLevel.INFO)
-                .blockCacheSize(64 * 1024 * 1024)
-                .maxOpenSSTables(256)
+
+        @Test
+        void dataSurvivesAReopen() throws TidesDBException {
+            Config config = Config.builder(tempDir.resolve("reopen").toString())
+                .logLevel(LogLevel.NONE)
                 .build();
 
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
+            try (TidesDB db = TidesDB.open(config)) {
+                db.createColumnFamily("cf", ColumnFamilyConfig.builder().build());
+                write(db, db.getColumnFamily("cf"), "durable", "value");
+            }
+            try (TidesDB db = TidesDB.open(config)) {
+                assertEquals("value", read(db, db.getColumnFamily("cf"), "durable"));
+            }
+        }
+    }
 
-            ColumnFamily cf = db.getColumnFamily("test_cf");
+    @Nested
+    class ColumnFamilies {
 
-            byte[] key = new byte[0]; // Bad key (empty)
-            byte[] value = "value".getBytes(StandardCharsets.UTF_8);
+        @Test
+        void createsListsAndDrops() throws TidesDBException {
+            try (TidesDB db = open("cf-crud")) {
+                db.createColumnFamily("alpha", ColumnFamilyConfig.builder().build());
+                db.createColumnFamily("beta", ColumnFamilyConfig.builder().build());
 
-            assertThrows(IllegalArgumentException.class, () -> {
+                assertEquals(2, db.listColumnFamilies().length);
+                assertTrue(Arrays.asList(db.listColumnFamilies()).contains("alpha"));
+
+                db.dropColumnFamily("alpha");
+                assertFalse(Arrays.asList(db.listColumnFamilies()).contains("alpha"));
+            }
+        }
+
+        @Test
+        void listsNothingOnAFreshDatabase() throws TidesDBException {
+            try (TidesDB db = open("cf-empty")) {
+                assertEquals(0, db.listColumnFamilies().length);
+            }
+        }
+
+        @Test
+        void rejectsADuplicateName() throws TidesDBException {
+            try (TidesDB db = openWithCf("cf-dup", "cf")) {
+                TidesDBException e = assertThrows(TidesDBException.class,
+                    () -> db.createColumnFamily("cf", ColumnFamilyConfig.builder().build()));
+                assertEquals(TidesDBException.ERR_EXISTS, e.getErrorCode());
+            }
+        }
+
+        @Test
+        void reportsAMissingFamilyAsNotFound() throws TidesDBException {
+            try (TidesDB db = open("cf-missing")) {
+                TidesDBException e =
+                    assertThrows(TidesDBException.class, () -> db.getColumnFamily("absent"));
+                assertEquals(TidesDBException.ERR_NOT_FOUND, e.getErrorCode());
+            }
+        }
+
+        @Test
+        void renamesInPlace() throws TidesDBException {
+            try (TidesDB db = openWithCf("cf-rename", "before")) {
+                write(db, db.getColumnFamily("before"), "k", "v");
+                db.renameColumnFamily("before", "after");
+
+                assertTrue(Arrays.asList(db.listColumnFamilies()).contains("after"));
+                assertFalse(Arrays.asList(db.listColumnFamilies()).contains("before"));
+                assertEquals("v", read(db, db.getColumnFamily("after"), "k"));
+            }
+        }
+
+        @Test
+        void clonesAtAPointInTime() throws TidesDBException {
+            try (TidesDB db = openWithCf("cf-clone", "src")) {
+                ColumnFamily src = db.getColumnFamily("src");
+                write(db, src, "before-clone", "yes");
+
+                db.cloneColumnFamily("src", "dst");
+                write(db, src, "after-clone", "yes");
+
+                ColumnFamily dst = db.getColumnFamily("dst");
+                assertEquals("yes", read(db, dst, "before-clone"));
+                assertNull(read(db, dst, "after-clone"), "a clone is a point-in-time copy");
+            }
+        }
+
+        @Test
+        void rejectsEmptyNames() throws TidesDBException {
+            try (TidesDB db = open("cf-names")) {
+                ColumnFamilyConfig cfg = ColumnFamilyConfig.builder().build();
+                assertThrows(IllegalArgumentException.class, () -> db.createColumnFamily(null, cfg));
+                assertThrows(IllegalArgumentException.class, () -> db.createColumnFamily("", cfg));
+                assertThrows(IllegalArgumentException.class,
+                    () -> db.createColumnFamily("cf", null));
+                assertThrows(IllegalArgumentException.class, () -> db.dropColumnFamily(""));
+                assertThrows(IllegalArgumentException.class, () -> db.getColumnFamily(""));
+            }
+        }
+
+        @Test
+        void keepsFamiliesIsolated() throws TidesDBException {
+            try (TidesDB db = openWithCf("cf-isolated", "one")) {
+                db.createColumnFamily("two", ColumnFamilyConfig.builder().build());
+                ColumnFamily one = db.getColumnFamily("one");
+                ColumnFamily two = db.getColumnFamily("two");
+
+                write(db, one, "shared-key", "from-one");
+                write(db, two, "shared-key", "from-two");
+
+                assertEquals("from-one", read(db, one, "shared-key"));
+                assertEquals("from-two", read(db, two, "shared-key"));
+            }
+        }
+    }
+
+    @Nested
+    class ReadsAndWrites {
+
+        @Test
+        void putsAndGets() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-basic", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "key", "value");
+                assertEquals("value", read(db, cf, "key"));
+            }
+        }
+
+        @Test
+        void reportsAnAbsentKeyAsNull() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-absent", "cf")) {
+                assertNull(read(db, db.getColumnFamily("cf"), "never-written"));
+            }
+        }
+
+        @Test
+        void distinguishesAnEmptyValueFromAnAbsence() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-empty", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
                 try (Transaction txn = db.beginTransaction()) {
-                    txn.put(cf, key, value);
-                }
-            });
-
-            assertThrows(IllegalArgumentException.class, () -> {
-                try (Transaction txn = db.beginTransaction()) {
-                    byte[] result = txn.get(cf, key);
-                    assertNotNull(result);
-                    assertArrayEquals(value, result);
-                }
-            });
-
-            assertThrows(IllegalArgumentException.class, () -> {
-                try (Transaction txn = db.beginTransaction()) {
-                    txn.delete(cf, key);
+                    txn.put(cf, b("present-but-empty"), new byte[0]);
                     txn.commit();
                 }
-            });
-        }
-    }
-    
-    @Test
-    @Order(19)
-    void testTransactionReset() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb17").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Begin transaction and do first batch of work
-            Transaction txn = db.beginTransaction();
-            txn.put(cf, "key1".getBytes(), "value1".getBytes());
-            txn.commit();
-            
-            // Reset instead of free + begin
-            txn.reset(IsolationLevel.READ_COMMITTED);
-            
-            // Second batch of work using the same transaction
-            txn.put(cf, "key2".getBytes(), "value2".getBytes());
-            txn.commit();
-            
-            // Free once when done
-            txn.free();
-            
-            // Verify both keys exist
-            try (Transaction readTxn = db.beginTransaction()) {
-                byte[] result1 = readTxn.get(cf, "key1".getBytes());
-                assertNotNull(result1);
-                assertArrayEquals("value1".getBytes(), result1);
-                
-                byte[] result2 = readTxn.get(cf, "key2".getBytes());
-                assertNotNull(result2);
-                assertArrayEquals("value2".getBytes(), result2);
-            }
-        }
-    }
-    
-    @Test
-    @Order(20)
-    void testTransactionResetWithDifferentIsolation() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb18").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Begin with READ_COMMITTED
-            Transaction txn = db.beginTransaction(IsolationLevel.READ_COMMITTED);
-            txn.put(cf, "key1".getBytes(), "value1".getBytes());
-            txn.commit();
-            
-            // Reset with different isolation level (REPEATABLE_READ)
-            txn.reset(IsolationLevel.REPEATABLE_READ);
-            txn.put(cf, "key2".getBytes(), "value2".getBytes());
-            txn.commit();
-            
-            // Reset again with SERIALIZABLE
-            txn.reset(IsolationLevel.SERIALIZABLE);
-            txn.put(cf, "key3".getBytes(), "value3".getBytes());
-            txn.commit();
-            
-            txn.free();
-            
-            // Verify all keys exist
-            try (Transaction readTxn = db.beginTransaction()) {
-                for (int i = 1; i <= 3; i++) {
-                    byte[] result = readTxn.get(cf, ("key" + i).getBytes());
-                    assertNotNull(result);
-                    assertArrayEquals(("value" + i).getBytes(), result);
+                try (Transaction txn = db.beginTransaction()) {
+                    byte[] value = txn.get(cf, b("present-but-empty"));
+                    assertNotNull(value, "an empty value is a present key, not an absence");
+                    assertEquals(0, value.length);
+                    assertTrue(txn.contains(cf, b("present-but-empty")));
+                    txn.rollback();
                 }
             }
         }
-    }
-    
-    @Test
-    @Order(22)
-    void testRangeCost() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb20").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Insert data
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    String key = String.format("key%04d", i);
-                    txn.put(cf, key.getBytes(), ("value" + i).getBytes());
+
+        @Test
+        void overwritesInPlace() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-overwrite", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "key", "first");
+                write(db, cf, "key", "second");
+                assertEquals("second", read(db, cf, "key"));
+            }
+        }
+
+        @Test
+        void roundTripsBinaryValues() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-binary", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                byte[] key = {0x00, 0x01, (byte) 0xFF, 0x7F};
+                byte[] value = new byte[512];
+                for (int i = 0; i < value.length; i++) {
+                    value[i] = (byte) i;
                 }
-                txn.commit();
-            }
-            
-            // Estimate cost for a range
-            double cost = cf.rangeCost("key0000".getBytes(), "key0099".getBytes());
-            assertTrue(cost >= 0.0, "Range cost should be non-negative");
-        }
-    }
-    
-    @Test
-    @Order(23)
-    void testRangeCostComparison() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb21").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Insert data
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 1000; i++) {
-                    String key = String.format("key%04d", i);
-                    txn.put(cf, key.getBytes(), ("value" + i).getBytes());
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, key, value);
+                    txn.commit();
                 }
-                txn.commit();
-            }
-            
-            // Both costs should be non-negative
-            double costSmall = cf.rangeCost("key0000".getBytes(), "key0010".getBytes());
-            double costLarge = cf.rangeCost("key0000".getBytes(), "key0999".getBytes());
-            assertTrue(costSmall >= 0.0, "Small range cost should be non-negative");
-            assertTrue(costLarge >= 0.0, "Large range cost should be non-negative");
-        }
-    }
-    
-    @Test
-    @Order(24)
-    void testRangeCostNullKeys() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb22").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            assertThrows(IllegalArgumentException.class,
-                () -> cf.rangeCost(null, "key".getBytes()));
-            assertThrows(IllegalArgumentException.class,
-                () -> cf.rangeCost("key".getBytes(), null));
-            assertThrows(IllegalArgumentException.class,
-                () -> cf.rangeCost(new byte[0], "key".getBytes()));
-            assertThrows(IllegalArgumentException.class,
-                () -> cf.rangeCost("key".getBytes(), new byte[0]));
-        }
-    }
-    
-    @Test
-    @Order(25)
-    void testCommitHookBasic() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb23").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            List<CommitOp[]> received = new ArrayList<>();
-            AtomicLong lastSeq = new AtomicLong();
-            
-            cf.setCommitHook((ops, commitSeq) -> {
-                received.add(ops);
-                lastSeq.set(commitSeq);
-                return 0;
-            });
-            
-            // Commit a put operation
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-            
-            // Hook fires synchronously, so data is available immediately
-            assertEquals(1, received.size());
-            assertEquals(1, received.get(0).length);
-            assertArrayEquals("key1".getBytes(), received.get(0)[0].getKey());
-            assertArrayEquals("value1".getBytes(), received.get(0)[0].getValue());
-            assertFalse(received.get(0)[0].isDelete());
-            assertTrue(lastSeq.get() > 0);
-            
-            cf.clearCommitHook();
-        }
-    }
-    
-    @Test
-    @Order(26)
-    void testCommitHookMultipleOps() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb24").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            List<CommitOp[]> received = new ArrayList<>();
-            
-            cf.setCommitHook((ops, commitSeq) -> {
-                received.add(ops);
-                return 0;
-            });
-            
-            // Commit multiple operations in one transaction
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.put(cf, "key2".getBytes(), "value2".getBytes());
-                txn.delete(cf, "key1".getBytes());
-                txn.commit();
-            }
-            
-            // Should fire once with all operations
-            assertEquals(1, received.size());
-            assertEquals(3, received.get(0).length);
-            
-            // Last op should be a delete
-            assertTrue(received.get(0)[2].isDelete());
-            assertArrayEquals("key1".getBytes(), received.get(0)[2].getKey());
-            
-            cf.clearCommitHook();
-        }
-    }
-    
-    @Test
-    @Order(27)
-    void testCommitHookClear() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb25").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            List<CommitOp[]> received = new ArrayList<>();
-            
-            cf.setCommitHook((ops, commitSeq) -> {
-                received.add(ops);
-                return 0;
-            });
-            
-            // First commit - hook should fire
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-            assertEquals(1, received.size());
-            
-            // Clear the hook
-            cf.clearCommitHook();
-            
-            // Second commit - hook should NOT fire
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key2".getBytes(), "value2".getBytes());
-                txn.commit();
-            }
-            assertEquals(1, received.size(), "Hook should not fire after clearing");
-        }
-    }
-    
-    @Test
-    @Order(28)
-    void testCommitHookNullThrows() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb26").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            assertThrows(IllegalArgumentException.class, () -> cf.setCommitHook(null));
-        }
-    }
-    
-    @Test
-    @Order(29)
-    void testMaxMemoryUsageConfig() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb27").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .maxMemoryUsage(0)
-            .build();
-        
-        assertEquals(0, config.getMaxMemoryUsage());
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-            
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, "key1".getBytes());
-                assertNotNull(result);
-                assertArrayEquals("value1".getBytes(), result);
-            }
-        }
-    }
-    
-    @Test
-    @Order(30)
-    void testMultiColumnFamilyTransaction() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb28").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("users", cfConfig);
-            db.createColumnFamily("orders", cfConfig);
-            
-            ColumnFamily usersCf = db.getColumnFamily("users");
-            ColumnFamily ordersCf = db.getColumnFamily("orders");
-            
-            // Atomic transaction across multiple column families
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(usersCf, "user:1000".getBytes(), "John Doe".getBytes());
-                txn.put(ordersCf, "order:5000".getBytes(), "user:1000|product:A".getBytes());
-                txn.commit();
-            }
-            
-            // Verify data in both column families
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] user = txn.get(usersCf, "user:1000".getBytes());
-                assertNotNull(user);
-                assertArrayEquals("John Doe".getBytes(), user);
-                
-                byte[] order = txn.get(ordersCf, "order:5000".getBytes());
-                assertNotNull(order);
-                assertArrayEquals("user:1000|product:A".getBytes(), order);
-            }
-        }
-    }
-    
-    @Test
-    @Order(31)
-    void testPurgeCf() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb29").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Insert data
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    txn.put(cf, ("key" + i).getBytes(), ("value" + i).getBytes());
+                try (Transaction txn = db.beginTransaction()) {
+                    assertArrayEquals(value, txn.get(cf, key));
+                    txn.rollback();
                 }
-                txn.commit();
-            }
-            
-            // Purge the column family (synchronous flush + compaction)
-            cf.purge();
-            
-            // Verify data still accessible after purge
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, "key50".getBytes());
-                assertNotNull(result);
-                assertArrayEquals("value50".getBytes(), result);
             }
         }
-    }
-    
-    @Test
-    @Order(32)
-    void testPurgeDb() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb30").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("cf1", cfConfig);
-            db.createColumnFamily("cf2", cfConfig);
-            
-            ColumnFamily cf1 = db.getColumnFamily("cf1");
-            ColumnFamily cf2 = db.getColumnFamily("cf2");
-            
-            // Insert data into both column families
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 50; i++) {
-                    txn.put(cf1, ("key" + i).getBytes(), ("value" + i).getBytes());
-                    txn.put(cf2, ("key" + i).getBytes(), ("value" + i).getBytes());
+
+        @Test
+        void roundTripsALargeValueThroughTheValueLog() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-large", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                byte[] value = new byte[256 * 1024];
+                Arrays.fill(value, (byte) 'x');
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("big"), value);
+                    txn.commit();
                 }
-                txn.commit();
-            }
-            
-            // Purge entire database
-            db.purge();
-            
-            // Verify data still accessible after purge
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result1 = txn.get(cf1, "key25".getBytes());
-                assertNotNull(result1);
-                assertArrayEquals("value25".getBytes(), result1);
-                
-                byte[] result2 = txn.get(cf2, "key25".getBytes());
-                assertNotNull(result2);
-                assertArrayEquals("value25".getBytes(), result2);
-            }
-        }
-    }
-    
-    @Test
-    @Order(33)
-    void testSyncWal() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb31").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .syncMode(SyncMode.SYNC_NONE)
-                .build();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-            
-            // Write some data
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-            
-            // Force WAL sync
-            cf.syncWal();
-            
-            // Verify data accessible
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, "key1".getBytes());
-                assertNotNull(result);
-                assertArrayEquals("value1".getBytes(), result);
-            }
-        }
-    }
-    
-    @Test
-    @Order(34)
-    void testGetDbStats() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb32").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("cf1", cfConfig);
-            db.createColumnFamily("cf2", cfConfig);
-            
-            ColumnFamily cf1 = db.getColumnFamily("cf1");
-            
-            // Insert some data
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    txn.put(cf1, ("key" + i).getBytes(), ("value" + i).getBytes());
+                db.flushMemtable();
+                try (Transaction txn = db.beginTransaction()) {
+                    assertArrayEquals(value, txn.get(cf, b("big")));
+                    txn.rollback();
                 }
-                txn.commit();
             }
-            
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-            assertEquals(2, dbStats.getNumColumnFamilies());
-            assertTrue(dbStats.getTotalMemory() > 0);
-            assertTrue(dbStats.getResolvedMemoryLimit() > 0);
-            assertTrue(dbStats.getMemoryPressureLevel() >= 0);
-            assertTrue(dbStats.getGlobalSeq() > 0);
-            assertTrue(dbStats.getTotalMemtableBytes() >= 0);
-            assertTrue(dbStats.getTotalSstableCount() >= 0);
-            assertTrue(dbStats.getTotalDataSizeBytes() >= 0);
         }
-    }
-    
-    @Test
-    @Order(35)
-    void testGetDbStatsToString() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb33").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-        
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-            String str = dbStats.toString();
-            assertTrue(str.contains("numColumnFamilies="));
-            assertTrue(str.contains("totalMemory="));
-        }
-    }
-    
-    @Test
-    @Order(36)
-    void testUnifiedMemtableConfig() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_unified").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .unifiedMemtable(true)
-            .unifiedMemtableWriteBufferSize(0)
-            .unifiedMemtableSkipListMaxLevel(0)
-            .unifiedMemtableSkipListProbability(0)
-            .unifiedMemtableSyncMode(0)
-            .unifiedMemtableSyncIntervalUs(0)
-            .build();
 
-        assertTrue(config.isUnifiedMemtable());
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, "key1".getBytes());
-                assertNotNull(result);
-                assertArrayEquals("value1".getBytes(), result);
-            }
-
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-            assertTrue(dbStats.isUnifiedMemtableEnabled());
-        }
-    }
-
-    @Test
-    @Order(37)
-    void testDeleteColumnFamily() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_delcf").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("delete_me", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("delete_me");
-            assertNotNull(cf);
-
-            // Insert some data first
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(), "value1".getBytes());
-                txn.commit();
-            }
-
-            // Delete the column family via handle
-            db.deleteColumnFamily(cf);
-
-            // Verify it's gone
-            assertThrows(TidesDBException.class, () -> db.getColumnFamily("delete_me"));
-        }
-    }
-
-    @Test
-    @Order(38)
-    void testDeleteColumnFamilyNull() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_delcf_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            assertThrows(IllegalArgumentException.class, () -> db.deleteColumnFamily(null));
-        }
-    }
-
-    @Test
-    @Order(39)
-    void testIteratorKeyValue() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_kv").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 10; i++) {
-                    String key = String.format("key%02d", i);
-                    String value = "value" + i;
-                    txn.put(cf, key.getBytes(), value.getBytes());
+        @Test
+        void readsNothingFromARolledBackTransaction() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-rollback", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("discarded"), b("v"));
+                    txn.rollback();
                 }
-                txn.commit();
+                assertNull(read(db, cf, "discarded"));
             }
+        }
 
-            // Test combined keyValue() method
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    iter.seekToFirst();
+        @Test
+        void doesNotTrackANoTrackRead() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-notrack", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "probe", "value");
 
-                    int count = 0;
-                    while (iter.isValid()) {
-                        KeyValue kv = iter.keyValue();
-                        assertNotNull(kv);
-                        assertNotNull(kv.getKey());
-                        assertNotNull(kv.getValue());
-                        count++;
-                        iter.next();
+                try (Transaction txn = db.beginTransaction()) {
+                    assertEquals("value", s(txn.getNoTrack(cf, b("probe"))));
+                    assertNull(txn.getNoTrack(cf, b("absent")));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void reportsExistenceWithoutReadingTheValue() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-contains", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "here", "v");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    assertTrue(txn.contains(cf, b("here")));
+                    assertFalse(txn.contains(cf, b("not-here")));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void rejectsBadArguments() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class, () -> txn.put(null, b("k"), b("v")));
+                    assertThrows(IllegalArgumentException.class, () -> txn.put(cf, null, b("v")));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.put(cf, new byte[0], b("v")));
+                    assertThrows(IllegalArgumentException.class, () -> txn.put(cf, b("k"), null));
+                    assertThrows(IllegalArgumentException.class, () -> txn.get(cf, null));
+                    assertThrows(IllegalArgumentException.class, () -> txn.delete(cf, new byte[0]));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void refusesOperationsOnAFreedTransaction() throws TidesDBException {
+            try (TidesDB db = openWithCf("rw-freed", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                Transaction txn = db.beginTransaction();
+                txn.free();
+                txn.free();
+
+                assertThrows(IllegalStateException.class, () -> txn.put(cf, b("k"), b("v")));
+                assertThrows(IllegalStateException.class, () -> txn.get(cf, b("k")));
+                assertThrows(IllegalStateException.class, txn::commit);
+                assertDoesNotThrow(txn::requestAbort);
+            }
+        }
+    }
+
+    @Nested
+    class Deletes {
+
+        @Test
+        void deletesAKey() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-basic", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "doomed", "v");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.delete(cf, b("doomed"));
+                    txn.commit();
+                }
+                assertNull(read(db, cf, "doomed"));
+            }
+        }
+
+        @Test
+        void singleDeletesAKeyWrittenOnce() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-single", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "once", "v");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.singleDelete(cf, b("once"));
+                    txn.commit();
+                }
+                assertNull(read(db, cf, "once"));
+            }
+        }
+
+        @Test
+        void deletesAHalfOpenRange() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-range", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 20; i++) {
+                        txn.put(cf, b(String.format("k%02d", i)), b("v" + i));
                     }
-                    assertEquals(10, count);
+                    txn.commit();
+                }
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.deleteRange(cf, b("k05"), b("k10"));
+                    txn.commit();
+                }
+
+                assertNotNull(read(db, cf, "k04"), "below the lower bound");
+                assertNull(read(db, cf, "k05"), "the lower bound is inclusive");
+                assertNull(read(db, cf, "k09"));
+                assertNotNull(read(db, cf, "k10"), "the upper bound is exclusive");
+            }
+        }
+
+        @Test
+        void deletesToTheEndOfTheFamily() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-range-open", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 10; i++) {
+                        txn.put(cf, b("k" + i), b("v"));
+                    }
+                    txn.commit();
+                }
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.deleteRange(cf, b("k5"), null);
+                    txn.commit();
+                }
+
+                assertNotNull(read(db, cf, "k4"));
+                assertNull(read(db, cf, "k5"));
+                assertNull(read(db, cf, "k9"));
+            }
+        }
+
+        @Test
+        void deletesUnderAPrefix() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-prefix", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("user:1"), b("a"));
+                    txn.put(cf, b("user:2"), b("b"));
+                    txn.put(cf, b("order:1"), b("c"));
+                    txn.commit();
+                }
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.deletePrefix(cf, b("user:"));
+                    txn.commit();
+                }
+
+                assertNull(read(db, cf, "user:1"));
+                assertNull(read(db, cf, "user:2"));
+                assertNotNull(read(db, cf, "order:1"), "another prefix is untouched");
+            }
+        }
+
+        @Test
+        void letsANewerWriteSurviveARangeDelete() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-range-newer", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k05", "old");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.deleteRange(cf, b("k00"), b("k10"));
+                    txn.put(cf, b("k05"), b("new"));
+                    txn.commit();
+                }
+                assertEquals("new", read(db, cf, "k05"));
+            }
+        }
+
+        @Test
+        void boundsRangeAndPrefixArguments() throws TidesDBException {
+            try (TidesDB db = openWithCf("del-bounds", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                byte[] tooLong = new byte[Transaction.MAX_RANGE_BOUND_SIZE + 1];
+                Arrays.fill(tooLong, (byte) 'a');
+
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deleteRange(cf, null, b("z")));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deleteRange(cf, new byte[0], b("z")));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deleteRange(cf, tooLong, b("z")));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deleteRange(cf, b("a"), tooLong));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deletePrefix(cf, new byte[0]));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.deletePrefix(cf, tooLong));
+                    txn.rollback();
                 }
             }
         }
     }
 
-    @Test
-    @Order(40)
-    void testDbStatsUnifiedFields() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_stats_unified").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+    @Nested
+    class TimeToLive {
 
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-
-            // With default config, unified memtable should be disabled
-            assertFalse(dbStats.isUnifiedMemtableEnabled());
-            assertFalse(dbStats.isObjectStoreEnabled());
-            assertFalse(dbStats.isReplicaMode());
-            assertTrue(dbStats.getUnifiedMemtableBytes() >= 0);
-            assertTrue(dbStats.getUnifiedImmutableCount() >= 0);
-            assertTrue(dbStats.getLocalCacheBytesUsed() >= 0);
-            assertTrue(dbStats.getTotalUploads() >= 0);
-            assertTrue(dbStats.getTotalUploadFailures() >= 0);
-
-            // Single-writer fencing epochs default to 0 outside object-store primary mode
-            assertEquals(0, dbStats.getPrimaryEpoch());
-            assertTrue(dbStats.getSeenEpoch() >= 0);
-
-            // Verify toString includes new fields
-            String str = dbStats.toString();
-            assertTrue(str.contains("unifiedMemtableEnabled="));
-            assertTrue(str.contains("objectStoreEnabled="));
-            assertTrue(str.contains("replicaMode="));
-            assertTrue(str.contains("primaryEpoch="));
-            assertTrue(str.contains("seenEpoch="));
+        @Test
+        void keepsAnUnexpiredEntry() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-live", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("lives"), b("v"), 3600);
+                    txn.commit();
+                }
+                assertEquals("v", read(db, cf, "lives"));
+            }
         }
-    }
 
-    @Test
-    @Order(41)
-    void testLogLevelNoneValue() {
-        assertEquals(99, LogLevel.NONE.getValue());
-        assertEquals(LogLevel.NONE, LogLevel.fromValue(99));
-    }
-
-    @Test
-    @Order(21)
-    void testTransactionResetNullIsolation() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb19").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            Transaction txn = db.beginTransaction();
-            txn.put(cf, "key1".getBytes(), "value1".getBytes());
-            txn.commit();
-
-            // Null isolation level should throw IllegalArgumentException
-            assertThrows(IllegalArgumentException.class, () -> txn.reset(null));
-
-            txn.free();
+        @Test
+        void treatsZeroAndNegativeAsNoExpiry() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-none", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("zero"), b("v"), 0);
+                    txn.put(cf, b("negative"), b("v"), -1);
+                    txn.commit();
+                }
+                assertEquals("v", read(db, cf, "zero"));
+                assertEquals("v", read(db, cf, "negative"));
+            }
         }
-    }
 
-    @Test
-    @Order(42)
-    void testTransactionSingleDelete() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_single_delete").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            byte[] key = "single_key".getBytes(StandardCharsets.UTF_8);
-            byte[] value = "single_value".getBytes(StandardCharsets.UTF_8);
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, key, value);
-                txn.commit();
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] result = txn.get(cf, key);
-                assertNotNull(result);
-                assertArrayEquals(value, result);
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.singleDelete(cf, key);
-                txn.commit();
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(cf, key));
+        @Test
+        void expiresAnEntryWhoseDeadlineHasPassed() throws Exception {
+            try (TidesDB db = openWithCf("ttl-expired", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("brief"), b("v"), 1);
+                    txn.commit();
+                }
+                // deadlines are judged against the same once-a-second clock
+                Thread.sleep(2500);
+                assertNull(read(db, cf, "brief"), "the entry is past its deadline");
             }
         }
     }
 
-    @Test
-    @Order(44)
-    void testTombstoneCfConfigRoundTrip() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_tombstone_cfg").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+    @Nested
+    class Savepoints {
 
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .tombstoneDensityTrigger(0.5)
-                .tombstoneDensityMinEntries(256)
-                .build();
+        @Test
+        void rollsBackToAMark() throws TidesDBException {
+            try (TidesDB db = openWithCf("sp-rollback", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("kept"), b("v"));
+                    txn.savepoint("mark");
+                    txn.put(cf, b("discarded"), b("v"));
+                    txn.rollbackToSavepoint("mark");
+                    txn.commit();
+                }
 
-            db.createColumnFamily("ts_cf", cfConfig);
-            ColumnFamily cf = db.getColumnFamily("ts_cf");
+                assertEquals("v", read(db, cf, "kept"));
+                assertNull(read(db, cf, "discarded"));
+            }
+        }
 
-            ColumnFamilyConfig readback = cf.getStats().getConfig();
-            assertNotNull(readback);
-            assertEquals(0.5, readback.getTombstoneDensityTrigger(), 0.0);
-            assertEquals(256L, readback.getTombstoneDensityMinEntries());
+        @Test
+        void releasesAMarkWithoutRollingBack() throws TidesDBException {
+            try (TidesDB db = openWithCf("sp-release", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.savepoint("mark");
+                    txn.put(cf, b("kept"), b("v"));
+                    txn.releaseSavepoint("mark");
+                    txn.commit();
+                }
+                assertEquals("v", read(db, cf, "kept"));
+            }
+        }
 
-            // Defaults from the C library should be sensible (min entries ~= 1024)
-            ColumnFamilyConfig defaults = ColumnFamilyConfig.defaultConfig();
-            assertTrue(defaults.getTombstoneDensityMinEntries() > 0,
-                "default tombstoneDensityMinEntries should be non-zero (sourced from C library)");
-            assertTrue(defaults.getTombstoneDensityTrigger() >= 0.0
-                       && defaults.getTombstoneDensityTrigger() <= 1.0,
-                "default tombstoneDensityTrigger should be in [0.0, 1.0]");
+        @Test
+        void nestsMarks() throws TidesDBException {
+            try (TidesDB db = openWithCf("sp-nested", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("a"), b("v"));
+                    txn.savepoint("outer");
+                    txn.put(cf, b("b"), b("v"));
+                    txn.savepoint("inner");
+                    txn.put(cf, b("c"), b("v"));
+                    txn.rollbackToSavepoint("inner");
+                    txn.commit();
+                }
+
+                assertEquals("v", read(db, cf, "a"));
+                assertEquals("v", read(db, cf, "b"));
+                assertNull(read(db, cf, "c"));
+            }
+        }
+
+        @Test
+        void reportsAnUnknownMark() throws TidesDBException {
+            try (TidesDB db = openWithCf("sp-unknown", "cf")) {
+                try (Transaction txn = db.beginTransaction()) {
+                    TidesDBException e = assertThrows(TidesDBException.class,
+                        () -> txn.rollbackToSavepoint("never-marked"));
+                    assertEquals(TidesDBException.ERR_NOT_FOUND, e.getErrorCode());
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void rejectsAnEmptyName() throws TidesDBException {
+            try (TidesDB db = openWithCf("sp-args", "cf")) {
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class, () -> txn.savepoint(null));
+                    assertThrows(IllegalArgumentException.class, () -> txn.savepoint(""));
+                    txn.rollback();
+                }
+            }
         }
     }
 
-    @Test
-    @Order(45)
-    void testTombstoneStatsPopulated() throws TidesDBException, InterruptedException {
-        Config config = Config.builder(tempDir.resolve("testdb_tombstone_stats").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+    @Nested
+    class Iterators {
 
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("ts_stats_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("ts_stats_cf");
-
-            final int n = 200;
+        /** Writes {@code count} keys named k000..k(count-1) and commits them. */
+        private void seed(TidesDB db, ColumnFamily cf, int count) throws TidesDBException {
             try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < n; i++) {
-                    txn.put(cf, ("key" + i).getBytes(StandardCharsets.UTF_8),
-                                ("value" + i).getBytes(StandardCharsets.UTF_8));
+                for (int i = 0; i < count; i++) {
+                    txn.put(cf, b(String.format("k%03d", i)), b("v" + i));
                 }
                 txn.commit();
             }
-            cf.flushMemtable();
+        }
 
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < n / 2; i++) {
-                    txn.delete(cf, ("key" + i).getBytes(StandardCharsets.UTF_8));
+        @Test
+        void walksForwardInKeyOrder() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-forward", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 25);
+
+                List<String> keys = new ArrayList<>();
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    it.seekToFirst();
+                    while (it.isValid()) {
+                        keys.add(s(it.key()));
+                        it.next();
+                    }
+                    txn.rollback();
                 }
-                txn.commit();
+
+                assertEquals(25, keys.size());
+                List<String> sorted = new ArrayList<>(keys);
+                sorted.sort(String::compareTo);
+                assertEquals(sorted, keys, "keys are ordered byte-wise");
             }
-            cf.flushMemtable();
+        }
 
-            // Wait for the flush to land so the stats include the tombstones
-            Thread.sleep(500);
+        @Test
+        void walksBackwardOverTheSameRows() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-backward", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 25);
 
-            Stats stats = cf.getStats();
-            assertNotNull(stats);
-            assertTrue(stats.getTotalTombstones() > 0,
-                "expected total_tombstones > 0 after deletes + flush");
-            assertTrue(stats.getTombstoneRatio() >= 0.0 && stats.getTombstoneRatio() <= 1.0,
-                "tombstone_ratio must be within [0.0, 1.0]");
-            assertTrue(stats.getMaxSstDensity() >= 0.0 && stats.getMaxSstDensity() <= 1.0,
-                "max_sst_density must be within [0.0, 1.0]");
-            assertTrue(stats.getMaxSstDensityLevel() >= 0,
-                "max_sst_density_level must be non-negative");
+                List<String> backward = new ArrayList<>();
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    it.seekToLast();
+                    while (it.isValid()) {
+                        backward.add(s(it.key()));
+                        it.prev();
+                    }
+                    txn.rollback();
+                }
 
-            long[] perLevel = stats.getLevelTombstoneCounts();
-            assertNotNull(perLevel, "level_tombstone_counts must be populated");
-            assertEquals(stats.getNumLevels(), perLevel.length,
-                "level_tombstone_counts length must match num_levels");
+                assertEquals(25, backward.size());
+                List<String> forward = new ArrayList<>(backward);
+                java.util.Collections.reverse(forward);
+                List<String> sorted = new ArrayList<>(forward);
+                sorted.sort(String::compareTo);
+                assertEquals(sorted, forward);
+            }
+        }
+
+        @Test
+        void readsKeyAndValueInOneCall() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-kv", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 5);
+
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    it.seekToFirst();
+                    assertTrue(it.isValid());
+                    KeyValue kv = it.keyValue();
+                    assertEquals(s(it.key()), s(kv.getKey()));
+                    assertEquals(s(it.value()), s(kv.getValue()));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void seeksToTheFirstKeyAtOrAfterATarget() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-seek", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 30);
+
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    it.seek(b("k010"));
+                    assertTrue(it.isValid());
+                    assertEquals("k010", s(it.key()));
+
+                    it.seekForPrev(b("k010"));
+                    assertTrue(it.isValid());
+                    assertEquals("k010", s(it.key()));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void leavesTheCursorInvalidPastTheEnd() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-past-end", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 5);
+
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    assertDoesNotThrow(() -> it.seek(b("zzzz")));
+                    assertFalse(it.isValid(), "seeking past the end is not an error");
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void isImmediatelyInvalidOnAnEmptyFamily() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-empty", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    assertDoesNotThrow(it::seekToFirst);
+                    assertFalse(it.isValid());
+                    assertDoesNotThrow(it::seekToLast);
+                    assertFalse(it.isValid());
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void scansOnlyTheRangeItWasGiven() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-range", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 100);
+                db.flushMemtable();
+
+                List<String> keys = new ArrayList<>();
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newRangeIterator(cf, b("k020"), b("k030"))) {
+                    it.seek(b("k020"));
+                    while (it.isValid() && s(it.key()).compareTo("k030") < 0) {
+                        keys.add(s(it.key()));
+                        it.next();
+                    }
+                    txn.rollback();
+                }
+
+                assertEquals(10, keys.size());
+                assertEquals("k020", keys.get(0));
+                assertEquals("k029", keys.get(keys.size() - 1));
+            }
+        }
+
+        @Test
+        void refusesOperationsOnAFreedIterator() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-freed", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                seed(db, cf, 3);
+
+                try (Transaction txn = db.beginTransaction()) {
+                    TidesDBIterator it = txn.newIterator(cf);
+                    it.free();
+                    it.free();
+
+                    assertFalse(it.isValid(), "a freed iterator reports invalid rather than throwing");
+                    assertThrows(IllegalStateException.class, it::next);
+                    assertThrows(IllegalStateException.class, it::key);
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void rejectsMissingRangeBounds() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-range-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.newRangeIterator(cf, null, b("z")));
+                    assertThrows(IllegalArgumentException.class,
+                        () -> txn.newRangeIterator(cf, b("a"), new byte[0]));
+                    txn.rollback();
+                }
+            }
         }
     }
 
-    @Test
-    @Order(46)
-    void testCompactRange() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_compact_range").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+    @Nested
+    class Isolation {
 
-        try (TidesDB db = TidesDB.open(config)) {
-            // Small write buffer keeps each batch falling into its own SSTable
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
-                .writeBufferSize(64 * 1024)
-                .build();
-            db.createColumnFamily("range_cf", cfConfig);
-            ColumnFamily cf = db.getColumnFamily("range_cf");
+        @Test
+        void beginsAtEveryLevel() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-levels", "cf")) {
+                for (IsolationLevel level : IsolationLevel.values()) {
+                    try (Transaction txn = db.beginTransaction(level)) {
+                        assertEquals(TransactionState.ACTIVE, txn.state());
+                        txn.rollback();
+                    }
+                }
+            }
+        }
 
-            // Multi-batch insert + flush to spread keys across several SSTables
-            for (int batch = 0; batch < 4; batch++) {
+        @Test
+        void takesTheFamilyDefault() throws TidesDBException {
+            try (TidesDB db = open("iso-cf-default")) {
+                db.createColumnFamily("cf", ColumnFamilyConfig.builder()
+                    .defaultIsolationLevel(IsolationLevel.SERIALIZABLE)
+                    .build());
+                ColumnFamily cf = db.getColumnFamily("cf");
+
+                try (Transaction txn = db.beginTransaction(cf)) {
+                    assertEquals(TransactionState.ACTIVE, txn.state());
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void refusesTheSecondCommitterOnAContendedKey() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-conflict", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+
+                try (Transaction first = db.beginTransaction(IsolationLevel.SNAPSHOT);
+                     Transaction second = db.beginTransaction(IsolationLevel.SNAPSHOT)) {
+                    first.put(cf, b("contended"), b("first"));
+                    second.put(cf, b("contended"), b("second"));
+
+                    first.commit();
+                    TidesDBException e = assertThrows(TidesDBException.class, second::commit);
+                    assertEquals(TidesDBException.ERR_CONFLICT, e.getErrorCode());
+                }
+                assertEquals("first", read(db, cf, "contended"));
+            }
+        }
+
+        @Test
+        void holdsAFrozenCeilingUnderRepeatableRead() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-repeatable", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "key", "before");
+
+                try (Transaction reader = db.beginTransaction(IsolationLevel.REPEATABLE_READ)) {
+                    assertEquals("before", s(reader.get(cf, b("key"))));
+                    write(db, cf, "key", "after");
+                    assertEquals("before", s(reader.get(cf, b("key"))),
+                        "the ceiling was frozen when the transaction began");
+                    reader.rollback();
+                }
+                assertEquals("after", read(db, cf, "key"));
+            }
+        }
+
+        @Test
+        void reportsAReadCeiling() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-ceiling", "cf")) {
+                // a committed write advances the global sequence, so the frozen
+                // ceiling below is something other than the initial zero
+                write(db, db.getColumnFamily("cf"), "seed", "v");
+
+                try (Transaction txn = db.beginTransaction(IsolationLevel.REPEATABLE_READ)) {
+                    assertTrue(txn.getReadSnapshot() > 0);
+                    txn.rollback();
+                }
+                try (Transaction txn = db.beginTransaction(IsolationLevel.READ_UNCOMMITTED)) {
+                    assertEquals(-1L, txn.getReadSnapshot(),
+                        "read-uncommitted filters at an unsigned UINT64_MAX");
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void resetsForReuse() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-reset", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("first-use"), b("v"));
+                    txn.commit();
+
+                    txn.reset(IsolationLevel.SERIALIZABLE);
+                    assertEquals(TransactionState.ACTIVE, txn.state());
+
+                    txn.put(cf, b("second-use"), b("v"));
+                    txn.commit();
+                }
+
+                assertEquals("v", read(db, cf, "first-use"));
+                assertEquals("v", read(db, cf, "second-use"));
+            }
+        }
+
+        @Test
+        void rejectsANullLevel() throws TidesDBException {
+            try (TidesDB db = openWithCf("iso-args", "cf")) {
+                assertThrows(IllegalArgumentException.class,
+                    () -> db.beginTransaction((IsolationLevel) null));
+                assertThrows(IllegalArgumentException.class,
+                    () -> db.beginTransaction((ColumnFamily) null));
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class, () -> txn.reset(null));
+                    txn.rollback();
+                }
+            }
+        }
+    }
+
+    @Nested
+    class TimeoutsAndAborts {
+
+        @Test
+        void setsAndClearsATimeout() throws TidesDBException {
+            try (TidesDB db = openWithCf("abort-timeout", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.setTimeout(3600);
+                    txn.put(cf, b("k"), b("v"));
+                    txn.setTimeout(0);
+                    txn.commit();
+                }
+                assertEquals("v", read(db, cf, "k"));
+            }
+        }
+
+        @Test
+        void expiresATransactionPastItsDeadline() throws Exception {
+            try (TidesDB db = openWithCf("abort-expired", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.setTimeout(1);
+                    // the engine ages a transaction against a clock a background
+                    // ticker publishes once a second, and expiry is strictly past
+                    // the deadline, so a one second timeout needs more than two
+                    // seconds of wall clock to be observed whatever the tick phase
+                    Thread.sleep(3200);
+
+                    TidesDBException e =
+                        assertThrows(TidesDBException.class, () -> txn.put(cf, b("k"), b("v")));
+                    assertEquals(TidesDBException.ERR_TXN_EXPIRED, e.getErrorCode());
+                }
+            }
+        }
+
+        @Test
+        void stopsATransactionOnRequest() throws TidesDBException {
+            try (TidesDB db = openWithCf("abort-request", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("k"), b("v"));
+                    txn.requestAbort();
+
+                    TidesDBException e = assertThrows(TidesDBException.class, txn::commit);
+                    assertEquals(TidesDBException.ERR_TXN_ABORTED, e.getErrorCode(),
+                        "an outside ruling is distinct from the engine's own conflict verdict");
+                }
+                assertNull(read(db, cf, "k"));
+            }
+        }
+
+        @Test
+        void abortsFromAnotherThread() throws Exception {
+            try (TidesDB db = openWithCf("abort-cross-thread", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                Transaction txn = db.beginTransaction();
+                txn.put(cf, b("k"), b("v"));
+
+                Thread aborter = new Thread(txn::requestAbort);
+                aborter.start();
+                aborter.join();
+
+                assertThrows(TidesDBException.class, txn::commit);
+                txn.free();
+            }
+        }
+    }
+
+    @Nested
+    class Snapshots {
+
+        @Test
+        void readsAsOfThePointItNamed() throws TidesDBException {
+            try (TidesDB db = openWithCf("snap-read", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "key", "before");
+
+                try (Snapshot snapshot = db.createSnapshot()) {
+                    assertTrue(snapshot.getSeq() > 0);
+                    write(db, cf, "key", "after");
+
+                    try (Transaction txn = db.beginTransactionAtSnapshot(snapshot)) {
+                        assertEquals("before", s(txn.get(cf, b("key"))));
+                        txn.rollback();
+                    }
+                    assertEquals("after", read(db, cf, "key"));
+                }
+            }
+        }
+
+        @Test
+        void readsAsOfAnExplicitSequence() throws TidesDBException {
+            try (TidesDB db = openWithCf("snap-seq", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "key", "before");
+
+                try (Snapshot snapshot = db.createSnapshot()) {
+                    write(db, cf, "key", "after");
+
+                    try (Transaction txn = db.beginTransactionAtSeq(snapshot.getSeq())) {
+                        assertEquals("before", s(txn.get(cf, b("key"))));
+                        txn.rollback();
+                    }
+                }
+            }
+        }
+
+        @Test
+        void releaseIsIdempotent() throws TidesDBException {
+            try (TidesDB db = open("snap-release")) {
+                Snapshot snapshot = db.createSnapshot();
+                long seq = snapshot.getSeq();
+
+                snapshot.release();
+                snapshot.release();
+
+                assertTrue(snapshot.isReleased());
+                assertEquals(seq, snapshot.getSeq(), "the sequence stays readable after release");
+                assertThrows(IllegalStateException.class,
+                    () -> db.beginTransactionAtSnapshot(snapshot));
+            }
+        }
+
+        @Test
+        void reportsTheOldestReadableSequence() throws TidesDBException {
+            try (TidesDB db = openWithCf("snap-floor", "cf")) {
+                assertDoesNotThrow(db::getOldestReadableSeq);
+            }
+        }
+
+        @Test
+        void rejectsANullSnapshot() throws TidesDBException {
+            try (TidesDB db = open("snap-args")) {
+                assertThrows(IllegalArgumentException.class,
+                    () -> db.beginTransactionAtSnapshot(null));
+            }
+        }
+    }
+
+    @Nested
+    class TwoPhaseCommit {
+
+        @Test
+        void appliesAPreparedTransactionOnCommit() throws TidesDBException {
+            try (TidesDB db = openWithCf("2pc-commit", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("decided"), b("v"));
+                    txn.prepare(b("xid-1"));
+                    assertEquals(TransactionState.PREPARED, txn.state());
+
+                    assertNull(read(db, cf, "decided"), "a prepared write stays invisible");
+
+                    txn.commitPrepared();
+                    assertEquals(TransactionState.COMMITTED, txn.state());
+                }
+                assertEquals("v", read(db, cf, "decided"));
+            }
+        }
+
+        @Test
+        void discardsAPreparedTransactionOnRollback() throws TidesDBException {
+            try (TidesDB db = openWithCf("2pc-rollback", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("undecided"), b("v"));
+                    txn.prepare(b("xid-2"));
+                    txn.rollbackPrepared();
+                    assertEquals(TransactionState.ABORTED, txn.state());
+                }
+                assertNull(read(db, cf, "undecided"));
+            }
+        }
+
+        @Test
+        void refusesPhaseTwoOnAnUnpreparedTransaction() throws TidesDBException {
+            try (TidesDB db = openWithCf("2pc-unprepared", "cf")) {
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(TidesDBException.class, txn::commitPrepared);
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void listsNothingInDoubtAfterACleanRun() throws TidesDBException {
+            try (TidesDB db = openWithCf("2pc-recover", "cf")) {
+                PreparedTransaction[] inDoubt = db.recoverPrepared();
+                assertNotNull(inDoubt);
+                assertEquals(0, inDoubt.length);
+            }
+        }
+
+        @Test
+        void rejectsAnEmptyXid() throws TidesDBException {
+            try (TidesDB db = openWithCf("2pc-args", "cf")) {
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class, () -> txn.prepare(null));
+                    assertThrows(IllegalArgumentException.class, () -> txn.prepare(new byte[0]));
+                    txn.rollback();
+                }
+            }
+        }
+    }
+
+    @Nested
+    class CommitHooks {
+
+        @Test
+        void deliversTheCommittedBatch() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-batch", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                AtomicInteger opCount = new AtomicInteger();
+                AtomicLong lastSeq = new AtomicLong();
+                List<String> keys = java.util.Collections.synchronizedList(new ArrayList<>());
+
+                cf.setCommitHook((ops, commitSeq) -> {
+                    opCount.addAndGet(ops.length);
+                    lastSeq.set(commitSeq);
+                    for (CommitOp op : ops) {
+                        keys.add(s(op.getKey()));
+                    }
+                    return 0;
+                });
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("a"), b("1"));
+                    txn.put(cf, b("b"), b("2"));
+                    txn.commit();
+                }
+
+                assertEquals(2, opCount.get());
+                assertTrue(lastSeq.get() > 0);
+                assertTrue(keys.containsAll(Arrays.asList("a", "b")));
+                cf.clearCommitHook();
+            }
+        }
+
+        @Test
+        void marksDeletesAndCarriesTtl() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-ops", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                List<CommitOp> seen = java.util.Collections.synchronizedList(new ArrayList<>());
+                cf.setCommitHook((ops, commitSeq) -> {
+                    seen.addAll(Arrays.asList(ops));
+                    return 0;
+                });
+
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("plain"), b("v"));
+                    txn.put(cf, b("expiring"), b("v"), 3600);
+                    txn.delete(cf, b("gone"));
+                    txn.commit();
+                }
+
+                assertEquals(3, seen.size());
+                CommitOp delete = seen.stream().filter(CommitOp::isDelete).findFirst().orElseThrow();
+                assertEquals("gone", s(delete.getKey()));
+                assertNull(delete.getValue(), "a delete carries no value");
+
+                CommitOp expiring = seen.stream()
+                    .filter(o -> "expiring".equals(s(o.getKey()))).findFirst().orElseThrow();
+                assertTrue(expiring.getTtl() > 0, "the hook sees the absolute deadline");
+
+                CommitOp plain = seen.stream()
+                    .filter(o -> "plain".equals(s(o.getKey()))).findFirst().orElseThrow();
+                assertEquals(-1, plain.getTtl(), "an entry that never expires reports -1");
+
+                cf.clearCommitHook();
+            }
+        }
+
+        @Test
+        void stopsFiringOnceCleared() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-clear", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                AtomicInteger calls = new AtomicInteger();
+                cf.setCommitHook((ops, seq) -> {
+                    calls.incrementAndGet();
+                    return 0;
+                });
+
+                write(db, cf, "before-clear", "v");
+                int afterFirst = calls.get();
+                assertTrue(afterFirst > 0);
+
+                cf.clearCommitHook();
+                write(db, cf, "after-clear", "v");
+                assertEquals(afterFirst, calls.get());
+            }
+        }
+
+        @Test
+        void replacesAnInstalledHook() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-replace", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                AtomicInteger first = new AtomicInteger();
+                AtomicInteger second = new AtomicInteger();
+
+                cf.setCommitHook((ops, seq) -> { first.incrementAndGet(); return 0; });
+                cf.setCommitHook((ops, seq) -> { second.incrementAndGet(); return 0; });
+
+                write(db, cf, "k", "v");
+
+                assertEquals(0, first.get(), "the replaced hook no longer fires");
+                assertTrue(second.get() > 0);
+                cf.clearCommitHook();
+            }
+        }
+
+        @Test
+        void survivesAThrowingHook() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-throws", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                cf.setCommitHook((ops, seq) -> {
+                    throw new RuntimeException("hook failure");
+                });
+
+                assertDoesNotThrow(() -> write(db, cf, "k", "v"));
+                assertEquals("v", read(db, cf, "k"), "the commit is already durable");
+                cf.clearCommitHook();
+            }
+        }
+
+        @Test
+        void isDetachedWhenTheDatabaseCloses() throws TidesDBException {
+            TidesDB db = openWithCf("hook-close", "cf");
+            ColumnFamily cf = db.getColumnFamily("cf");
+            cf.setCommitHook((ops, seq) -> 0);
+            assertDoesNotThrow(db::close);
+        }
+
+        @Test
+        void rejectsANullHook() throws TidesDBException {
+            try (TidesDB db = openWithCf("hook-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                assertThrows(IllegalArgumentException.class, () -> cf.setCommitHook(null));
+            }
+        }
+    }
+
+    @Nested
+    class Maintenance {
+
+        @Test
+        void flushesAndReportsFlushState() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-flush", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k", "v");
+
+                assertDoesNotThrow(db::flushMemtable);
+                assertDoesNotThrow(db::isFlushing);
+                assertEquals("v", read(db, cf, "k"));
+            }
+        }
+
+        @Test
+        void syncsTheWriteAheadLog() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-sync", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
+                assertDoesNotThrow(db::syncWal);
+            }
+        }
+
+        @Test
+        void establishesADurabilityBarrier() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-checkpoint", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
+                assertDoesNotThrow(db::checkpoint);
+            }
+        }
+
+        @Test
+        void compactsAFamily() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-compact", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 200; i++) {
+                        txn.put(cf, b(String.format("k%04d", i)), b("v" + i));
+                    }
+                    txn.commit();
+                }
+                db.flushMemtable();
+
+                assertDoesNotThrow(cf::compact);
+                assertDoesNotThrow(cf::isCompacting);
+                assertEquals("v100", read(db, cf, "k0100"));
+            }
+        }
+
+        @Test
+        void compactsAKeyRange() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-compact-range", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 100; i++) {
+                        txn.put(cf, b(String.format("k%03d", i)), b("v"));
+                    }
+                    txn.commit();
+                }
+                db.flushMemtable();
+
+                assertDoesNotThrow(() -> cf.compactRange(b("k000"), b("k050")));
+                assertEquals("v", read(db, cf, "k025"));
+            }
+        }
+
+        @Test
+        void writesAnOpenableBackup() throws Exception {
+            Path backupDir = tempDir.resolve("backup");
+            try (TidesDB db = openWithCf("maint-backup", "cf")) {
+                write(db, db.getColumnFamily("cf"), "backed-up", "v");
+                db.flushMemtable();
+                db.backup(backupDir.toString());
+            }
+
+            assertTrue(Files.isDirectory(backupDir));
+            try (TidesDB restored = TidesDB.open(
+                    Config.builder(backupDir.toString()).logLevel(LogLevel.NONE).build())) {
+                assertEquals("v", read(restored, restored.getColumnFamily("cf"), "backed-up"));
+            }
+        }
+
+        @Test
+        void rejectsAnEmptyBackupDirectory() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-backup-args", "cf")) {
+                assertThrows(IllegalArgumentException.class, () -> db.backup(null));
+                assertThrows(IllegalArgumentException.class, () -> db.backup(""));
+            }
+        }
+
+        @Test
+        void appliesARuntimeConfigChange() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-runtime-config", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k", "v");
+
+                ColumnFamilyConfig updated = ColumnFamilyConfig.builder()
+                    .compression(CompressionAlgorithm.ZSTD)
+                    .enableBloomFilter(true)
+                    .bloomFpr(0.05)
+                    .build();
+                cf.updateRuntimeConfig(updated, true);
+
+                ColumnFamilyConfig applied = cf.getStats().getConfig();
+                assertArrayEquals(new int[]{CompressionAlgorithm.ZSTD.getValue()},
+                    applied.getEncodingPipeline());
+                assertEquals(0.05, applied.getBloomFpr(), 1e-9);
+                assertEquals("cf", applied.getName(), "the family keeps its identity");
+                assertEquals("v", read(db, cf, "k"));
+            }
+        }
+
+        @Test
+        void rejectsANullRuntimeConfig() throws TidesDBException {
+            try (TidesDB db = openWithCf("maint-runtime-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                assertThrows(IllegalArgumentException.class,
+                    () -> cf.updateRuntimeConfig(null, false));
+            }
+        }
+    }
+
+    @Nested
+    class Statistics {
+
+        @Test
+        void reportsColumnFamilyStatistics() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-cf", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
                 try (Transaction txn = db.beginTransaction()) {
                     for (int i = 0; i < 50; i++) {
-                        int n = batch * 50 + i;
-                        byte[] key = String.format("k%05d", n).getBytes(StandardCharsets.UTF_8);
-                        byte[] value = ("value" + n).getBytes(StandardCharsets.UTF_8);
-                        txn.put(cf, key, value);
+                        txn.put(cf, b("k" + i), b("v" + i));
                     }
                     txn.commit();
                 }
-                cf.flushMemtable();
-            }
+                db.flushMemtable();
 
-            // Narrow range compaction over a slice of the keyspace
-            byte[] start = "k00050".getBytes(StandardCharsets.UTF_8);
-            byte[] end   = "k00100".getBytes(StandardCharsets.UTF_8);
-            cf.compactRange(start, end);
-
-            // Both endpoints null should be rejected with INVALID_ARGS
-            TidesDBException ex = assertThrows(TidesDBException.class,
-                () -> cf.compactRange(null, null));
-            assertEquals(-2, ex.getErrorCode(), "expected TDB_ERR_INVALID_ARGS for both-null range");
-
-            // Both empty should also be rejected
-            assertThrows(TidesDBException.class,
-                () -> cf.compactRange(new byte[0], new byte[0]));
-
-            // A key outside the compacted range must still read back unchanged
-            try (Transaction txn = db.beginTransaction()) {
-                byte[] outside = txn.get(cf, "k00150".getBytes(StandardCharsets.UTF_8));
-                assertNotNull(outside);
-                assertArrayEquals("value150".getBytes(StandardCharsets.UTF_8), outside);
+                CfStats stats = cf.getStats();
+                assertNotNull(stats);
+                assertTrue(stats.getTotalKeys() > 0);
+                assertEquals("cf", stats.getConfig().getName());
+                assertEquals(CfStats.MAX_LEVELS, stats.getLevelSizes().length);
+                assertEquals(CfStats.MAX_LEVELS, stats.getLevelNumSstables().length);
+                assertEquals(CfStats.MAX_LEVELS, stats.getLevelKeyCounts().length);
+                assertEquals(CfStats.MAX_LEVELS, stats.getLevelTombstoneCounts().length);
+                assertTrue(stats.getNumLevels() >= 0);
+                assertTrue(stats.getUserBytesWritten() > 0);
+                assertNotNull(stats.toString());
             }
         }
-    }
 
-    @Test
-    @Order(47)
-    void testMaxConcurrentFlushes() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_max_flushes").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .maxConcurrentFlushes(1)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("flush_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("flush_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "k".getBytes(StandardCharsets.UTF_8),
-                            "v".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-            cf.flushMemtable();
-        }
-
-        // defaultConfig() should source maxConcurrentFlushes from the C library. The engine's
-        // default is 0, which is the "auto" sentinel meaning "pin to the resolved
-        // num_flush_threads" -- so the only invariant we can assert is that it is non-negative.
-        Config defaults = Config.defaultConfig();
-        assertTrue(defaults.getMaxConcurrentFlushes() >= 0,
-            "default maxConcurrentFlushes should be sourced from tidesdb_default_config()");
-    }
-
-    @Test
-    @Order(43)
-    void testTransactionSingleDeleteNullArgs() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_single_delete_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.singleDelete(null, "k".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.singleDelete(cf, null));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.singleDelete(cf, new byte[0]));
-            }
-        }
-    }
-
-    @Test
-    @Order(48)
-    void testRaiseOpenFileLimit() {
-        // Reporting-only call (desired <= 0) returns the current ceiling without changing it.
-        long current = TidesDB.raiseOpenFileLimit(0);
-        assertTrue(current > 0, "current open-file ceiling should be positive");
-
-        // A raise attempt is non-fatal and returns the ceiling in effect afterwards (>= current).
-        long after = TidesDB.raiseOpenFileLimit(current);
-        assertTrue(after >= current, "ceiling after a raise attempt should not be lower");
-    }
-
-    @Test
-    @Order(49)
-    void testCancelBackgroundWork() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_cancel_bg").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("cancel_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("cancel_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "k".getBytes(StandardCharsets.UTF_8),
-                            "v".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-
-            // Sticky db-wide cancel of background compaction; flushes are unaffected.
-            assertDoesNotThrow(db::cancelBackgroundWork);
-        }
-    }
-
-    @Test
-    @Order(50)
-    void testFinishCompactionsOnClose() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_finish_compactions").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .finishCompactionsOnClose(true)
-            .build();
-
-        assertTrue(config.isFinishCompactionsOnClose());
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("finish_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("finish_cf");
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "k".getBytes(StandardCharsets.UTF_8),
-                            "v".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-            cf.flushMemtable();
-        }
-        // close() returning without error is the observable contract for this flag.
-    }
-
-    @Test
-    @Order(51)
-    void testCfConfigIniRoundTrip() throws TidesDBException {
-        String iniFile = tempDir.resolve("cf_config.ini").toString();
-        String section = "round_trip_cf";
-
-        ColumnFamilyConfig original = ColumnFamilyConfig.builder()
-            .writeBufferSize(96 * 1024 * 1024)
-            .levelSizeRatio(8)
-            .minLevels(4)
-            .klogValueThreshold(1024)
-            .compressionAlgorithm(CompressionAlgorithm.ZSTD_COMPRESSION)
-            .enableBloomFilter(true)
-            .bloomFPR(0.02)
-            .enableBlockIndexes(true)
-            .indexSampleRatio(2)
-            .blockIndexPrefixLen(8)
-            .syncMode(SyncMode.SYNC_INTERVAL)
-            .syncIntervalUs(250000)
-            .defaultIsolationLevel(IsolationLevel.SNAPSHOT)
-            .l1FileCountTrigger(6)
-            .l0QueueStallThreshold(15)
-            .tombstoneDensityTrigger(0.4)
-            .tombstoneDensityMinEntries(2048)
-            .minDiskSpace(50 * 1024 * 1024)
-            .useBtree(true)
-            .objectLazyCompaction(true)
-            .objectPrefetchCompaction(false)
-            .build();
-
-        original.saveToIni(iniFile, section);
-
-        ColumnFamilyConfig loaded = ColumnFamilyConfig.loadFromIni(iniFile, section);
-
-        assertEquals(original.getWriteBufferSize(), loaded.getWriteBufferSize());
-        assertEquals(original.getLevelSizeRatio(), loaded.getLevelSizeRatio());
-        assertEquals(original.getMinLevels(), loaded.getMinLevels());
-        assertEquals(original.getKlogValueThreshold(), loaded.getKlogValueThreshold());
-        assertEquals(original.getCompressionAlgorithm(), loaded.getCompressionAlgorithm());
-        assertEquals(original.isEnableBloomFilter(), loaded.isEnableBloomFilter());
-        assertEquals(original.getBloomFPR(), loaded.getBloomFPR(), 1e-9);
-        assertEquals(original.isEnableBlockIndexes(), loaded.isEnableBlockIndexes());
-        assertEquals(original.getIndexSampleRatio(), loaded.getIndexSampleRatio());
-        assertEquals(original.getBlockIndexPrefixLen(), loaded.getBlockIndexPrefixLen());
-        assertEquals(original.getSyncMode(), loaded.getSyncMode());
-        assertEquals(original.getSyncIntervalUs(), loaded.getSyncIntervalUs());
-        assertEquals(original.getDefaultIsolationLevel(), loaded.getDefaultIsolationLevel());
-        assertEquals(original.getL1FileCountTrigger(), loaded.getL1FileCountTrigger());
-        assertEquals(original.getL0QueueStallThreshold(), loaded.getL0QueueStallThreshold());
-        assertEquals(original.getTombstoneDensityTrigger(), loaded.getTombstoneDensityTrigger(), 1e-9);
-        assertEquals(original.getTombstoneDensityMinEntries(), loaded.getTombstoneDensityMinEntries());
-        assertEquals(original.getMinDiskSpace(), loaded.getMinDiskSpace());
-        assertEquals(original.isUseBtree(), loaded.isUseBtree());
-        assertEquals(original.isObjectLazyCompaction(), loaded.isObjectLazyCompaction());
-        assertEquals(original.isObjectPrefetchCompaction(), loaded.isObjectPrefetchCompaction());
-    }
-
-    @Test
-    @Order(52)
-    void testCfConfigIniInvalidArgs() {
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.defaultConfig().saveToIni(null, "s"));
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.defaultConfig().saveToIni("f.ini", ""));
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.loadFromIni("", "s"));
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.loadFromIni("f.ini", null));
-        // Reading a non-existent INI file surfaces as a TidesDBException, not a crash.
-        assertThrows(TidesDBException.class,
-            () -> ColumnFamilyConfig.loadFromIni(
-                tempDir.resolve("does_not_exist.ini").toString(), "nope"));
-    }
-
-    @Test
-    @Order(53)
-    void testWriteAmplificationCounters() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_write_amp").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("wa_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("wa_cf");
-
-            for (int i = 0; i < 200; i++) {
+        @Test
+        void estimatesCardinality() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-cardinality", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
                 try (Transaction txn = db.beginTransaction()) {
-                    txn.put(cf, ("key" + i).getBytes(StandardCharsets.UTF_8),
-                                ("value" + i).getBytes(StandardCharsets.UTF_8));
+                    for (int i = 0; i < 100; i++) {
+                        txn.put(cf, b("k" + i), b("v"));
+                    }
                     txn.commit();
                 }
+                db.flushMemtable();
+
+                assertTrue(cf.estimateCardinality() >= 0);
             }
-            cf.flushMemtable();
-            cf.purge();
-
-            Stats stats = cf.getStats();
-            // Counters are non-negative and user bytes reflect the committed payload.
-            assertTrue(stats.getUserBytesWritten() > 0, "user bytes should be recorded");
-            assertTrue(stats.getWalBytesWritten() >= 0);
-            assertTrue(stats.getFlushBytesWritten() >= 0);
-            assertTrue(stats.getCompactionBytesWritten() >= 0);
-            assertTrue(stats.getCompactionBytesRead() >= 0);
-            assertTrue(stats.getFlushCount() >= 0);
-            assertTrue(stats.getCompactionCount() >= 0);
-
-            DbStats dbStats = db.getDbStats();
-            assertTrue(dbStats.getUserBytesWritten() > 0, "db-wide user bytes should be recorded");
-            assertTrue(dbStats.getUwalBytesWritten() >= 0);
-            assertTrue(dbStats.getWalBytesWritten() >= 0);
-            assertTrue(dbStats.getFlushBytesWritten() >= 0);
-            assertTrue(dbStats.getCompactionBytesWritten() >= 0);
-            assertTrue(dbStats.getCompactionBytesRead() >= 0);
-            assertTrue(dbStats.getFlushCount() >= 0);
-            assertTrue(dbStats.getCompactionCount() >= 0);
         }
-    }
 
-    @Test
-    @Order(54)
-    void testS3ConfigBuilderValidation() {
-        // Required fields must be present
-        assertThrows(IllegalArgumentException.class, () -> S3Config.builder().build());
-        assertThrows(IllegalArgumentException.class,
-            () -> S3Config.builder().endpoint("s3.amazonaws.com").build());
-        assertThrows(IllegalArgumentException.class,
-            () -> S3Config.builder().endpoint("s3.amazonaws.com").bucket("b").build());
-        assertThrows(IllegalArgumentException.class,
-            () -> S3Config.builder().endpoint("s3.amazonaws.com").bucket("b").accessKey("ak").build());
+        @Test
+        void reportsDatabaseStatistics() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-db", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
 
-        // A fully specified config builds and exposes its values, with secure defaults
-        S3Config s3 = S3Config.builder()
-            .endpoint("s3.amazonaws.com")
-            .bucket("my-bucket")
-            .prefix("prod/db1/")
-            .accessKey("AKID")
-            .secretKey("SECRET")
-            .region("us-east-1")
-            .build();
-        assertEquals("s3.amazonaws.com", s3.getEndpoint());
-        assertEquals("my-bucket", s3.getBucket());
-        assertEquals("prod/db1/", s3.getPrefix());
-        assertEquals("us-east-1", s3.getRegion());
-        assertTrue(s3.isUseSsl(), "TLS should be on by default");
-        assertFalse(s3.isUsePathStyle(), "virtual-hosted by default");
-        assertFalse(s3.isTlsInsecureSkipVerify(), "TLS verification on by default");
-        assertEquals(0, s3.getMultipartThreshold());
-        assertEquals(0, s3.getMultipartPartSize());
-    }
-
-    @Test
-    @Order(55)
-    void testS3Availability() {
-        // Probe must be callable and return a definite boolean without throwing.
-        boolean available = TidesDB.isS3Available();
-        assertTrue(available || !available);
-    }
-
-    @Test
-    @Order(56)
-    void testOpenWithS3Config() throws TidesDBException {
-        S3Config s3 = S3Config.builder()
-            .endpoint("127.0.0.1:9000")
-            .bucket("tidesdb-test")
-            .accessKey("minioadmin")
-            .secretKey("minioadmin")
-            .usePathStyle(true)
-            .useSsl(false)
-            .build();
-
-        Config config = Config.builder(tempDir.resolve("testdb_s3").toString())
-            .objectStoreS3Config(s3)
-            .build();
-
-        if (TidesDB.isS3Available()) {
-            // With a built-in S3 backend but no live MinIO/S3 endpoint, connector creation or
-            // open is expected to fail -- but it must surface as a TidesDBException, not a crash.
-            assertThrows(TidesDBException.class, () -> { TidesDB.open(config).close(); });
-        } else {
-            // No S3 support compiled in: opening must throw a clear, catchable exception.
-            TidesDBException ex =
-                assertThrows(TidesDBException.class, () -> TidesDB.open(config));
-            assertTrue(ex.getMessage().toLowerCase().contains("s3"),
-                "exception should explain S3 is unavailable, was: " + ex.getMessage());
+                DbStats stats = db.getDbStats();
+                assertNotNull(stats);
+                assertEquals(1, stats.getNumColumnFamilies());
+                assertTrue(stats.getGlobalSeq() > 0);
+                assertTrue(stats.getUserBytesWritten() > 0);
+                assertTrue(stats.getWalBytesWritten() > 0);
+                assertNotNull(stats.toString());
+            }
         }
-    }
 
-    @Test
-    @Order(57)
-    void testCommitHookReplaceAndVerify() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_replace").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            List<CommitOp[]> receivedA = new ArrayList<>();
-
-            cf.setCommitHook((ops, commitSeq) -> {
-                receivedA.add(ops);
-                return 0;
-            });
-
-            // Commit first put -- hookA should fire
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "keyA".getBytes(StandardCharsets.UTF_8),
-                            "valueA".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
+        @Test
+        void reportsCacheStatistics() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-cache", "cf")) {
+                CacheStats stats = db.getCacheStats();
+                assertNotNull(stats);
+                assertTrue(stats.getHits() >= 0);
+                assertTrue(stats.getMisses() >= 0);
+                assertTrue(stats.getNumPartitions() > 0);
+                assertNotNull(stats.toString());
             }
-
-            assertEquals(1, receivedA.size());
-            assertEquals(1, receivedA.get(0).length);
-            assertArrayEquals("keyA".getBytes(StandardCharsets.UTF_8),
-                receivedA.get(0)[0].getKey());
-            assertArrayEquals("valueA".getBytes(StandardCharsets.UTF_8),
-                receivedA.get(0)[0].getValue());
-
-            // Replace with a second hook
-            List<CommitOp[]> receivedB = new ArrayList<>();
-
-            cf.setCommitHook((ops, commitSeq) -> {
-                receivedB.add(ops);
-                return 0;
-            });
-
-            // Commit second put -- hookB should fire, hookA should NOT fire again
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "keyB".getBytes(StandardCharsets.UTF_8),
-                            "valueB".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-
-            assertEquals(1, receivedA.size(),
-                "Old hook should not fire again after replacement");
-            assertEquals(1, receivedB.size());
-            assertEquals(1, receivedB.get(0).length);
-            assertArrayEquals("keyB".getBytes(StandardCharsets.UTF_8),
-                receivedB.get(0)[0].getKey());
-            assertArrayEquals("valueB".getBytes(StandardCharsets.UTF_8),
-                receivedB.get(0)[0].getValue());
-
-            cf.clearCommitHook();
         }
-    }
 
-    @Test
-    @Order(58)
-    void testCommitHookOldHookSurvivesFailure() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_survive").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+        @Test
+        void reportsWhereWritersWaited() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-stall", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
 
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            List<CommitOp[]> receivedA = new ArrayList<>();
-
-            cf.setCommitHook((ops, commitSeq) -> {
-                receivedA.add(ops);
-                return 0;
-            });
-
-            // Commit a put -- hookA fires
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(StandardCharsets.UTF_8),
-                            "value1".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
+                StallStats stats = db.getStallStats();
+                assertNotNull(stats);
+                assertEquals(StallReason.values().length, stats.getReasons().length);
+                for (StallReason reason : StallReason.values()) {
+                    assertNotNull(stats.get(reason));
+                    assertTrue(stats.get(reason).getCount() >= 0);
+                }
+                assertTrue(stats.getTotalUs() >= 0);
+                assertThrows(IllegalArgumentException.class, () -> stats.get(null));
             }
-            assertEquals(1, receivedA.size());
-
-            // Clear the hook
-            cf.clearCommitHook();
-
-            // Commit another put -- hookA should NOT fire
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key2".getBytes(StandardCharsets.UTF_8),
-                            "value2".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-            assertEquals(1, receivedA.size(),
-                "Hook should not fire after clearing");
-
-            // Re-register hookA
-            cf.setCommitHook((ops, commitSeq) -> {
-                receivedA.add(ops);
-                return 0;
-            });
-
-            // Commit a third put -- re-registered hook should fire
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key3".getBytes(StandardCharsets.UTF_8),
-                            "value3".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-            assertEquals(2, receivedA.size(),
-                "Re-registered hook should fire");
-            assertEquals(1, receivedA.get(1).length);
-            assertArrayEquals("key3".getBytes(StandardCharsets.UTF_8),
-                receivedA.get(1)[0].getKey());
-
-            cf.clearCommitHook();
         }
-    }
 
-    @Test
-    @Order(59)
-    void testCommitHookConcurrentReplaceAndCommit() throws TidesDBException, InterruptedException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_concurrent").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
+        @Test
+        void reportsWhatEachFileClassAskedOfTheDevice() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-io", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
+                db.flushMemtable();
 
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
+                IoStats stats = db.getIoStats();
+                assertNotNull(stats);
+                assertEquals(IoClass.values().length, stats.getClasses().length);
+                for (IoClass cls : IoClass.values()) {
+                    assertNotNull(stats.get(cls));
+                    assertTrue(stats.get(cls).getBytesPerSecond() >= 0.0);
+                }
+                assertTrue(stats.getTotalBytes() > 0);
+                assertThrows(IllegalArgumentException.class, () -> stats.get(null));
+            }
+        }
 
-            ColumnFamily cf = db.getColumnFamily("test_cf");
+        @Test
+        void reportsWhatEachEncodingChainAchieved() throws TidesDBException {
+            try (TidesDB db = open("stats-encoding")) {
+                db.createColumnFamily("cf", ColumnFamilyConfig.builder()
+                    .compression(CompressionAlgorithm.LZ4)
+                    .build());
+                ColumnFamily cf = db.getColumnFamily("cf");
 
-            AtomicInteger hookCounter = new AtomicInteger(0);
-            CountDownLatch startLatch = new CountDownLatch(1);
-            CountDownLatch stopLatch = new CountDownLatch(1);
-
-            // Set an initial hook
-            cf.setCommitHook((ops, commitSeq) -> {
-                hookCounter.incrementAndGet();
-                return 0;
-            });
-
-            // Writer threads that commit puts in a loop
-            int numWriters = 4;
-            Thread[] writers = new Thread[numWriters];
-            for (int w = 0; w < numWriters; w++) {
-                final int writerId = w;
-                writers[w] = new Thread(() -> {
-                    try {
-                        startLatch.await();
-                    } catch (InterruptedException e) {
-                        return;
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 200; i++) {
+                        txn.put(cf, b(String.format("k%04d", i)), b("a repetitive value " + i));
                     }
-                    while (stopLatch.getCount() > 0) {
+                    txn.commit();
+                }
+                db.flushMemtable();
+
+                EncodingStats[] klog = db.getKlogEncodingStats();
+                assertNotNull(klog);
+                assertTrue(klog.length <= EncodingStats.MAX_CHAINS);
+                for (EncodingStats e : klog) {
+                    assertNotNull(e.getIds());
+                    assertTrue(e.getRatio() >= 0.0);
+                    assertNotNull(e.toString());
+                }
+                assertNotNull(db.getVlogEncodingStats());
+            }
+        }
+
+        @Test
+        void describesAKeyRangeForAPlanner() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-range", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    for (int i = 0; i < 100; i++) {
+                        txn.put(cf, b(String.format("k%03d", i)), b("v"));
+                    }
+                    txn.commit();
+                }
+                db.flushMemtable();
+
+                RangeStats stats = cf.rangeStats(b("k000"), b("k050"));
+                assertNotNull(stats);
+                assertTrue(stats.getSstablesOverlapping() >= 0);
+                assertTrue(stats.getEstimatedKeys() >= 0);
+                assertNotNull(stats.toString());
+            }
+        }
+
+        @Test
+        void rejectsEmptyRangeBounds() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-range-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                assertThrows(IllegalArgumentException.class, () -> cf.rangeStats(null, b("z")));
+                assertThrows(IllegalArgumentException.class,
+                    () -> cf.rangeStats(b("a"), new byte[0]));
+            }
+        }
+    }
+
+    @Nested
+    class Concurrency {
+
+        @Test
+        void servesConcurrentWritersOnDistinctKeys() throws Exception {
+            try (TidesDB db = openWithCf("conc-writers", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                int threads = 4;
+                int perThread = 50;
+                List<Thread> workers = new ArrayList<>();
+                List<Throwable> errors = java.util.Collections.synchronizedList(new ArrayList<>());
+
+                for (int t = 0; t < threads; t++) {
+                    final int id = t;
+                    Thread worker = new Thread(() -> {
                         try {
-                            try (Transaction txn = db.beginTransaction()) {
-                                byte[] key = ("concurrent_key_" + writerId + "_" +
-                                    System.nanoTime()).getBytes(StandardCharsets.UTF_8);
-                                txn.put(cf, key, "value".getBytes(StandardCharsets.UTF_8));
-                                txn.commit();
+                            for (int i = 0; i < perThread; i++) {
+                                try (Transaction txn = db.beginTransaction()) {
+                                    txn.put(cf, b("t" + id + "-k" + i), b("v"));
+                                    txn.commit();
+                                }
                             }
-                        } catch (TidesDBException e) {
-                            // Expected during hook transitions
-                        } catch (IllegalStateException e) {
-                            // May occur if db is being closed
-                            break;
+                        } catch (Throwable e) {
+                            errors.add(e);
                         }
-                    }
-                });
-                writers[w].setDaemon(true);
-                writers[w].start();
-            }
-
-            // Replacer thread that alternates set and clear hook
-            Thread replacer = new Thread(() -> {
-                try {
-                    startLatch.await();
-                } catch (InterruptedException e) {
-                    return;
+                    });
+                    workers.add(worker);
+                    worker.start();
                 }
-                for (int i = 0; i < 100 && stopLatch.getCount() > 0; i++) {
-                    try {
-                        if (i % 2 == 0) {
-                            cf.setCommitHook((ops, commitSeq) -> {
-                                hookCounter.incrementAndGet();
-                                return 0;
-                            });
-                        } else {
-                            cf.clearCommitHook();
-                        }
-                    } catch (TidesDBException e) {
-                        // Expected during transitions
-                    } catch (IllegalStateException e) {
-                        break;
-                    }
+                for (Thread worker : workers) {
+                    worker.join();
                 }
-            });
-            replacer.setDaemon(true);
-            replacer.start();
 
-            // Start all threads
-            startLatch.countDown();
-
-            // Let them run for 3 seconds
-            Thread.sleep(3000);
-
-            // Signal stop
-            stopLatch.countDown();
-
-            // Wait for threads to finish
-            for (Thread w : writers) {
-                w.join(5000);
+                assertTrue(errors.isEmpty(), () -> "worker failures: " + errors);
+                for (int t = 0; t < threads; t++) {
+                    assertEquals("v", read(db, cf, "t" + t + "-k0"));
+                    assertEquals("v", read(db, cf, "t" + t + "-k" + (perThread - 1)));
+                }
             }
-            replacer.join(5000);
+        }
 
-            // No crash occurred -- verify final hook state is coherent
-            // Do a final commit to verify no crash
-            try {
-                cf.setCommitHook((ops, commitSeq) -> {
-                    hookCounter.incrementAndGet();
-                    return 0;
-                });
-
+        @Test
+        void servesConcurrentReadersDuringWrites() throws Exception {
+            try (TidesDB db = openWithCf("conc-readers", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
                 try (Transaction txn = db.beginTransaction()) {
-                    txn.put(cf, "final_key".getBytes(StandardCharsets.UTF_8),
-                                "final_value".getBytes(StandardCharsets.UTF_8));
+                    for (int i = 0; i < 100; i++) {
+                        txn.put(cf, b("k" + i), b("v" + i));
+                    }
                     txn.commit();
                 }
 
-                assertTrue(hookCounter.get() > 0,
-                    "At least one hook invocation should have occurred");
-
-                cf.clearCommitHook();
-            } catch (TidesDBException e) {
-                fail("Final commit after concurrent stress should not throw: " + e.getMessage());
-            }
-        }
-    }
-
-    @Test
-    @Order(60)
-    void testCommitHookRepeatedTransitions() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_transitions").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            final int iterations = 50;
-
-            for (int i = 0; i < iterations; i++) {
-                List<CommitOp[]> received = new ArrayList<>();
-
-                cf.setCommitHook((ops, commitSeq) -> {
-                    received.add(ops);
-                    return 0;
-                });
-
-                // Commit with hook active -- hook should fire
-                try (Transaction txn = db.beginTransaction()) {
-                    byte[] key = ("key_set_" + i).getBytes(StandardCharsets.UTF_8);
-                    byte[] value = ("value_set_" + i).getBytes(StandardCharsets.UTF_8);
-                    txn.put(cf, key, value);
-                    txn.commit();
-                }
-
-                assertEquals(1, received.size(),
-                    "Hook should fire at iteration " + i);
-                assertArrayEquals(("key_set_" + i).getBytes(StandardCharsets.UTF_8),
-                    received.get(0)[0].getKey());
-
-                // Clear the hook
-                cf.clearCommitHook();
-
-                // Commit with hook cleared -- hook should NOT fire
-                received.clear();
-                try (Transaction txn = db.beginTransaction()) {
-                    byte[] key = ("key_clear_" + i).getBytes(StandardCharsets.UTF_8);
-                    byte[] value = ("value_clear_" + i).getBytes(StandardCharsets.UTF_8);
-                    txn.put(cf, key, value);
-                    txn.commit();
-                }
-
-                assertEquals(0, received.size(),
-                    "Hook should not fire after clearing at iteration " + i);
-            }
-        }
-    }
-
-    @Test
-    @Order(61)
-    void testCloseWithInstalledHookReleasesCallback() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_close_hook_leak").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        List<CommitOp[]> received = new ArrayList<>();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            cf.setCommitHook((ops, commitSeq) -> {
-                received.add(ops);
-                return 0;
-            });
-
-            // Commit some data so the hook is exercised
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "key1".getBytes(StandardCharsets.UTF_8),
-                    "value1".getBytes(StandardCharsets.UTF_8));
-                txn.commit();
-            }
-
-            assertEquals(1, received.size());
-
-            // close() via try-with-resources WITHOUT calling clearCommitHook()
-        }
-
-        // After close, trigger GC and verify no callbacks fire post-close
-        System.gc();
-
-        // The hook should not have fired again after close
-        assertEquals(1, received.size(),
-            "Hook callback should not fire after database close");
-    }
-
-    @Test
-    @Order(62)
-    void testCloseWithInstalledHookIdempotent() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_close_idempotent").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        TidesDB db = TidesDB.open(config);
-        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-        db.createColumnFamily("test_cf", cfConfig);
-
-        ColumnFamily cf = db.getColumnFamily("test_cf");
-
-        cf.setCommitHook((ops, commitSeq) -> {
-            return 0;
-        });
-
-        // First close
-        db.close();
-
-        // Second close should not throw
-        assertDoesNotThrow(db::close);
-    }
-
-    @Test
-    @Order(63)
-    void testColumnFamilyOperationsThrowAfterOwnerClose() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_cf_after_close").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        ColumnFamily cf;
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            cf = db.getColumnFamily("test_cf");
-        }
-        // db is now closed; cf still references it
-
-        assertThrows(IllegalStateException.class, cf::getStats);
-        assertThrows(IllegalStateException.class, cf::compact);
-        assertThrows(IllegalStateException.class,
-            () -> cf.compactRange("a".getBytes(), "z".getBytes()));
-        assertThrows(IllegalStateException.class, cf::flushMemtable);
-        assertThrows(IllegalStateException.class, cf::isFlushing);
-        assertThrows(IllegalStateException.class, cf::isCompacting);
-        assertThrows(IllegalStateException.class,
-            () -> cf.updateRuntimeConfig(ColumnFamilyConfig.defaultConfig(), false));
-        assertThrows(IllegalStateException.class,
-            () -> cf.rangeCost("a".getBytes(), "z".getBytes()));
-        assertThrows(IllegalStateException.class,
-            () -> cf.setCommitHook((ops, seq) -> 0));
-        assertThrows(IllegalStateException.class, cf::clearCommitHook);
-        assertThrows(IllegalStateException.class, cf::purge);
-        assertThrows(IllegalStateException.class, cf::syncWal);
-    }
-
-    @Test
-    @Order(64)
-    void testSetClearHookAfterCloseThrows() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_after_close").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        ColumnFamily cf;
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-            cf = db.getColumnFamily("test_cf");
-        }
-        // db is now closed
-
-        assertThrows(IllegalStateException.class,
-            () -> cf.setCommitHook((ops, seq) -> 0));
-        assertThrows(IllegalStateException.class, cf::clearCommitHook);
-    }
-
-    @Test
-    @Order(65)
-    void testMultipleColumnFamiliesWithHooksCloseCleanly() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_multi_cf_hooks").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        List<CommitOp[]> hook1Received = new ArrayList<>();
-        List<CommitOp[]> hook2Received = new ArrayList<>();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("cf1", cfConfig);
-            db.createColumnFamily("cf2", cfConfig);
-            db.createColumnFamily("cf3", cfConfig);
-
-            ColumnFamily cf1 = db.getColumnFamily("cf1");
-            ColumnFamily cf2 = db.getColumnFamily("cf2");
-            ColumnFamily cf3 = db.getColumnFamily("cf3");
-
-            // Install hooks on cf1 and cf2, leave cf3 without a hook
-            cf1.setCommitHook((ops, seq) -> {
-                hook1Received.add(ops);
-                return 0;
-            });
-            cf2.setCommitHook((ops, seq) -> {
-                hook2Received.add(ops);
-                return 0;
-            });
-
-            // Commit data to all three CFs
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf1, "k1".getBytes(), "v1".getBytes());
-                txn.put(cf2, "k2".getBytes(), "v2".getBytes());
-                txn.put(cf3, "k3".getBytes(), "v3".getBytes());
-                txn.commit();
-            }
-
-            assertEquals(1, hook1Received.size());
-            assertEquals(1, hook2Received.size());
-
-            // close() via try-with-resources WITHOUT clearing hooks
-        }
-
-        // After close, no deferred callbacks should fire
-        System.gc();
-        assertEquals(1, hook1Received.size(),
-            "Hook1 should not fire after close");
-        assertEquals(1, hook2Received.size(),
-            "Hook2 should not fire after close");
-    }
-
-    @Test
-    @Order(69)
-    void testRepeatedS3OpenFailureDoesNotCrash() {
-        if (!TidesDB.isS3Available()) {
-            // S3 support not compiled in; nothing to verify.
-            return;
-        }
-
-        // Use a port that is almost certainly unused (distinct from 9000 used by other tests)
-        S3Config s3 = S3Config.builder()
-            .endpoint("127.0.0.1:19000")
-            .bucket("tidesdb-test")
-            .accessKey("minioadmin")
-            .secretKey("minioadmin")
-            .usePathStyle(true)
-            .useSsl(false)
-            .build();
-
-        Config config = Config.builder(tempDir.resolve("testdb_s3_leak").toString())
-            .objectStoreS3Config(s3)
-            .build();
-
-        // Each iteration creates an S3 connector then fails tidesdb_open.
-        // Without the fix the connector leaks native memory.
-        for (int i = 0; i < 50; i++) {
-            assertThrows(TidesDBException.class, () -> TidesDB.open(config));
-        }
-    }
-
-    @Test
-    @Order(66)
-    void testSetClearHookNotRacingClose() throws TidesDBException, InterruptedException {
-        Config config = Config.builder(tempDir.resolve("testdb_hook_race_close").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("test_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            // Set initial hook
-            cf.setCommitHook((ops, seq) -> {
-                return 0;
-            });
-
-            CountDownLatch startLatch = new CountDownLatch(1);
-            CountDownLatch stopLatch = new CountDownLatch(1);
-
-            // Writer thread that commits in a loop
-            Thread writer = new Thread(() -> {
-                try {
-                    startLatch.await();
-                } catch (InterruptedException e) {
-                    return;
-                }
-                while (stopLatch.getCount() > 0) {
-                    try (Transaction txn = db.beginTransaction()) {
-                        byte[] key = ("key_" + System.nanoTime()).getBytes(StandardCharsets.UTF_8);
-                        txn.put(cf, key, "value".getBytes(StandardCharsets.UTF_8));
-                        txn.commit();
-                    } catch (TidesDBException | IllegalStateException e) {
-                        // Expected during close
-                    }
-                }
-            });
-            writer.setDaemon(true);
-
-            // Replacer thread that alternates set/clear hook
-            Thread replacer = new Thread(() -> {
-                try {
-                    startLatch.await();
-                } catch (InterruptedException e) {
-                    return;
-                }
-                for (int i = 0; i < 200 && stopLatch.getCount() > 0; i++) {
-                    try {
-                        if (i % 2 == 0) {
-                            cf.setCommitHook((ops, seq) -> 0);
-                        } else {
-                            cf.clearCommitHook();
+                List<Throwable> errors = java.util.Collections.synchronizedList(new ArrayList<>());
+                List<Thread> readers = new ArrayList<>();
+                for (int t = 0; t < 4; t++) {
+                    Thread reader = new Thread(() -> {
+                        try {
+                            for (int i = 0; i < 100; i++) {
+                                assertEquals("v" + i, read(db, cf, "k" + i));
+                            }
+                        } catch (Throwable e) {
+                            errors.add(e);
                         }
-                    } catch (TidesDBException | IllegalStateException e) {
-                        // Expected during close
-                    }
+                    });
+                    readers.add(reader);
+                    reader.start();
                 }
-            });
-            replacer.setDaemon(true);
-
-            writer.start();
-            replacer.start();
-            startLatch.countDown();
-
-            // Let them run for ~500ms then close
-            Thread.sleep(500);
-
-            // Close should not hang, crash, or throw
-            assertDoesNotThrow(db::close);
-
-            stopLatch.countDown();
-            writer.join(5000);
-            replacer.join(5000);
-        }
-    }
-
-    @Test
-    @Order(71)
-    void testOpenWithObjectStoreFsPathFailsOnBadPath() throws Exception {
-        // A regular file (not a directory) as objectStoreFsPath must cause tidesdb_objstore_fs_create
-        // to return NULL, which should surface as TidesDBException instead of silently opening
-        // an ordinary local database.
-        Path osFile = tempDir.resolve("os_file");
-        Files.createFile(osFile);
-
-        Config config = Config.builder(tempDir.resolve("testdb_fs_badpath").toString())
-            .objectStoreFsPath(osFile.toString())
-            .build();
-
-        TidesDBException ex = assertThrows(TidesDBException.class, () -> TidesDB.open(config));
-        assertEquals(TidesDBException.ERR_IO, ex.getErrorCode());
-    }
-
-    @Test
-    @Order(72)
-    void testOpenWithObjectStoreFsPathSucceedsWithValidDirectory() throws TidesDBException {
-        Path osDir = tempDir.resolve("os_dir");
-        osDir.toFile().mkdirs();
-
-        Config config = Config.builder(tempDir.resolve("testdb_fs_goodpath").toString())
-            .objectStoreFsPath(osDir.toString())
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            assertNotNull(db);
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-            assertTrue(dbStats.isObjectStoreEnabled());
-        }
-    }
-
-    @Test
-    @Order(73)
-    void testOpenWithoutObjectStoreFsPathSucceeds() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("plaindb").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            assertNotNull(db);
-        }
-    }
-
-    @Test
-    @Order(75)
-    void testConfigValidationRejectsNegativeUnsignedFields() {
-        // logTruncationAt < 0
-        assertThrows(IllegalArgumentException.class,
-            () -> Config.builder(tempDir.toString()).logTruncationAt(-1).build());
-        try {
-            Config.builder(tempDir.toString()).logTruncationAt(-1).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("logTruncationAt"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("negative"),
-                "message should mention negative, was: " + e.getMessage());
-        }
-
-        // maxMemoryUsage < 0
-        assertThrows(IllegalArgumentException.class,
-            () -> Config.builder(tempDir.toString()).maxMemoryUsage(-1).build());
-        try {
-            Config.builder(tempDir.toString()).maxMemoryUsage(-1).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("maxMemoryUsage"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("negative"),
-                "message should mention negative, was: " + e.getMessage());
-        }
-
-        // unifiedMemtableWriteBufferSize < 0
-        assertThrows(IllegalArgumentException.class,
-            () -> Config.builder(tempDir.toString()).unifiedMemtableWriteBufferSize(-1).build());
-        try {
-            Config.builder(tempDir.toString()).unifiedMemtableWriteBufferSize(-1).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("unifiedMemtableWriteBufferSize"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("negative"),
-                "message should mention negative, was: " + e.getMessage());
-        }
-
-        // unifiedMemtableSyncIntervalUs < 0
-        assertThrows(IllegalArgumentException.class,
-            () -> Config.builder(tempDir.toString()).unifiedMemtableSyncIntervalUs(-1).build());
-        try {
-            Config.builder(tempDir.toString()).unifiedMemtableSyncIntervalUs(-1).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("unifiedMemtableSyncIntervalUs"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("negative"),
-                "message should mention negative, was: " + e.getMessage());
-        }
-    }
-
-    @Test
-    @Order(76)
-    void testObjectStoreConfigValidation() {
-        // Reject negative unsigned-native fields (zero sentinel accepted)
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().localCacheMaxBytes(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().multipartThreshold(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().multipartPartSize(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().walSyncThresholdBytes(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().replicaSyncIntervalUs(-1).build());
-
-        // Positive-required (<= 0 rejected)
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().maxConcurrentUploads(0).build());
-        try {
-            ObjectStoreConfig.builder().maxConcurrentUploads(0).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("maxConcurrentUploads"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("positive"),
-                "message should mention positive, was: " + e.getMessage());
-        }
-
-        assertThrows(IllegalArgumentException.class,
-            () -> ObjectStoreConfig.builder().maxConcurrentDownloads(-1).build());
-        try {
-            ObjectStoreConfig.builder().maxConcurrentDownloads(-1).build();
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("maxConcurrentDownloads"),
-                "message should mention field name, was: " + e.getMessage());
-            assertTrue(e.getMessage().toLowerCase().contains("positive"),
-                "message should mention positive, was: " + e.getMessage());
-        }
-
-        // Zero sentinel accepted for localCacheMaxBytes
-        assertDoesNotThrow(() -> ObjectStoreConfig.builder().localCacheMaxBytes(0).build());
-    }
-
-    @Test
-    @Order(77)
-    void testS3ConfigValidation() {
-        S3Config.Builder baseBuilder = S3Config.builder()
-            .endpoint("s3.amazonaws.com")
-            .bucket("b")
-            .accessKey("ak")
-            .secretKey("sk");
-
-        // Reject negative multipart fields
-        assertThrows(IllegalArgumentException.class,
-            () -> baseBuilder.multipartThreshold(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> S3Config.builder()
-                .endpoint("s3.amazonaws.com")
-                .bucket("b")
-                .accessKey("ak")
-                .secretKey("sk")
-                .multipartPartSize(-1)
-                .build());
-
-        // Zero sentinels accepted
-        assertDoesNotThrow(() -> S3Config.builder()
-            .endpoint("s3.amazonaws.com")
-            .bucket("b")
-            .accessKey("ak")
-            .secretKey("sk")
-            .multipartThreshold(0)
-            .multipartPartSize(0)
-            .build());
-
-        // Existing required-string validation still passes
-        assertThrows(IllegalArgumentException.class, () -> S3Config.builder().build());
-    }
-
-    @Test
-    @Order(78)
-    void testColumnFamilyConfigValidation() {
-        // Reject negative unsigned-native fields (zero sentinel accepted)
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().klogValueThreshold(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().syncIntervalUs(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().minDiskSpace(-1).build());
-
-        // Positive-required fields (<= 0 rejected)
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().writeBufferSize(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().levelSizeRatio(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().minLevels(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().indexSampleRatio(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().l1FileCountTrigger(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().l0QueueStallThreshold(0).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().tombstoneDensityMinEntries(0).build());
-
-        // Non-negative-int fields (zero acceptable, negative rejected)
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().dividingLevelOffset(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().blockIndexPrefixLen(-1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().skipListMaxLevel(-1).build());
-
-        // Float/double NaN/infinity/range rejection: bloomFPR
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().bloomFPR(Double.NaN).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().bloomFPR(Double.POSITIVE_INFINITY).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().bloomFPR(-0.1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().bloomFPR(1.1).build());
-
-        // Float/double NaN/infinity/range rejection: skipListProbability
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().skipListProbability(Float.NaN).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().skipListProbability(Float.POSITIVE_INFINITY).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().skipListProbability(-0.1f).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().skipListProbability(1.1f).build());
-
-        // Float/double NaN/infinity/range rejection: tombstoneDensityTrigger
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().tombstoneDensityTrigger(Double.NaN).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().tombstoneDensityTrigger(Double.POSITIVE_INFINITY).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().tombstoneDensityTrigger(-0.1).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().tombstoneDensityTrigger(1.1).build());
-
-        // Nullable-enum null rejection
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().compressionAlgorithm(null).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().syncMode(null).build());
-        assertThrows(IllegalArgumentException.class,
-            () -> ColumnFamilyConfig.builder().defaultIsolationLevel(null).build());
-
-        // fromNative compatibility: engine-supplied values must be accepted
-        assertDoesNotThrow(() -> ColumnFamilyConfig.defaultConfig());
-    }
-
-    @Test
-    @Order(74)
-    void testS3PrecedenceOverFsPathOnFailure() throws TidesDBException {
-        Path osFile = tempDir.resolve("os_file_s3");
-        try {
-            Files.createFile(osFile);
-        } catch (java.io.IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        S3Config s3 = S3Config.builder()
-            .endpoint("127.0.0.1:19001")
-            .bucket("tidesdb-test")
-            .accessKey("minioadmin")
-            .secretKey("minioadmin")
-            .usePathStyle(true)
-            .useSsl(false)
-            .build();
-
-        Config config = Config.builder(tempDir.resolve("testdb_s3_over_fs").toString())
-            .objectStoreS3Config(s3)
-            .objectStoreFsPath(osFile.toString())
-            .build();
-
-        // S3 takes precedence over fs path. If S3 is available, the S3 connector creation or
-        // open fails with TidesDBException. If S3 is unavailable, the S3 connector creation
-        // itself throws. In neither case does a silent filesystem fallback occur.
-        assertThrows(TidesDBException.class, () -> TidesDB.open(config));
-    }
-
-    @Test
-    @Order(70)
-    void testJniBufferMethodsCoverage() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_coverage").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.defaultConfig();
-            db.createColumnFamily("coverage_cf", cfConfig);
-
-            ColumnFamily cf = db.getColumnFamily("coverage_cf");
-
-            // Insert 100 entries into one transaction and commit
-            try (Transaction txn = db.beginTransaction()) {
-                for (int i = 0; i < 100; i++) {
-                    byte[] key = String.format("cov_key%04d", i).getBytes(StandardCharsets.UTF_8);
-                    byte[] value = ("cov_value" + i).getBytes(StandardCharsets.UTF_8);
-                    txn.put(cf, key, value);
+                for (Thread reader : readers) {
+                    reader.join();
                 }
-                txn.commit();
+
+                assertTrue(errors.isEmpty(), () -> "reader failures: " + errors);
             }
-
-            // 1. Transaction put/get/delete/singleDelete with various byte arrays
-            try (Transaction txn = db.beginTransaction()) {
-                // put with a 0-length value and a 1-byte key
-                byte[] tinyKey = new byte[]{0x42};
-                byte[] emptyValue = new byte[0];
-                txn.put(cf, tinyKey, emptyValue);
-
-                // get of that entry
-                byte[] got = txn.get(cf, tinyKey);
-                assertNotNull(got, "get should return a non-null result for the 0-length value entry");
-                assertEquals(0, got.length, "value should be 0-length");
-
-                // delete that entry
-                txn.delete(cf, tinyKey);
-
-                // singleDelete of a fresh entry
-                byte[] sdKey = new byte[]{0x43};
-                byte[] sdValue = new byte[]{0x01};
-                txn.put(cf, sdKey, sdValue);
-                txn.singleDelete(cf, sdKey);
-
-                txn.commit();
-            }
-
-            // Confirm get of deleted key throws TidesDBException
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(TidesDBException.class, () -> txn.get(cf, new byte[]{0x42}));
-                assertThrows(TidesDBException.class, () -> txn.get(cf, new byte[]{0x43}));
-            }
-
-            // 2. Iterator seek/seekForPrev/key/value/keyValue
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    iter.seekToFirst();
-                    int count = 0;
-                    while (iter.isValid()) {
-                        byte[] k = iter.key();
-                        byte[] v = iter.value();
-                        KeyValue kv = iter.keyValue();
-                        assertNotNull(k, "iterator key should not be null");
-                        assertNotNull(v, "iterator value should not be null");
-                        assertNotNull(kv, "iterator keyValue should not be null");
-                        assertNotNull(kv.getKey(), "KeyValue.getKey() should not be null");
-                        assertNotNull(kv.getValue(), "KeyValue.getValue() should not be null");
-                        count++;
-                        iter.next();
-                    }
-                    assertEquals(100, count, "iterator should visit exactly 100 entries");
-                }
-            }
-
-            // seek and seekForPrev
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    byte[] targetKey = String.format("cov_key%04d", 50).getBytes(StandardCharsets.UTF_8);
-                    iter.seek(targetKey);
-                    assertTrue(iter.isValid(), "iterator should be valid after seek");
-                    byte[] seekedKey = iter.key();
-                    assertNotNull(seekedKey);
-                    assertTrue(seekedKey.length > 0, "seeked key should not be empty");
-
-                    iter.seekForPrev(targetKey);
-                    assertTrue(iter.isValid(), "iterator should be valid after seekForPrev");
-                    byte[] seekedForPrevKey = iter.key();
-                    assertNotNull(seekedForPrevKey);
-                    assertTrue(seekedForPrevKey.length > 0, "seekForPrev key should not be empty");
-                }
-            }
-
-            // 3. compactRange with single-byte bounds and with one-null-one-nonnull
-            cf.flushMemtable();
-            assertDoesNotThrow(() -> cf.compactRange(new byte[]{0x10}, new byte[]{0x20}),
-                "compactRange with valid bounds should succeed");
-            assertDoesNotThrow(() -> cf.compactRange(null, new byte[]{0x20}),
-                "compactRange with null start should succeed");
-            assertDoesNotThrow(() -> cf.compactRange(new byte[]{0x10}, null),
-                "compactRange with null end should succeed");
-
-            // 4. rangeCost with single-byte bounds
-            double cost = cf.rangeCost(new byte[]{0x01}, new byte[]{(byte) 0xFF});
-            assertTrue(cost >= 0.0, "rangeCost should be non-negative");
-
-            // 5. getStats on the CF after data insertion
-            Stats stats = cf.getStats();
-            assertNotNull(stats, "getStats should return non-null");
-
-            // 6. getDbStats on the database handle
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats, "getDbStats should return non-null");
-
-            // 7. listColumnFamilies and iterate the result
-            String[] families = db.listColumnFamilies();
-            assertNotNull(families, "listColumnFamilies should return non-null");
-            assertTrue(families.length > 0, "should have at least one column family");
-            boolean found = false;
-            for (String f : families) {
-                if ("coverage_cf".equals(f)) {
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "coverage_cf should be in the list");
-
-            // 8. getCacheStats on the database handle
-            CacheStats cacheStats = db.getCacheStats();
-            assertNotNull(cacheStats, "getCacheStats should return non-null");
-        }
-    }
-
-    @Test
-    @Order(79)
-    void testIteratorSeekNullAndEmptyKey() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_iter_seek_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "k".getBytes(), "v".getBytes());
-                txn.commit();
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                try (TidesDBIterator iter = txn.newIterator(cf)) {
-                    assertThrows(IllegalArgumentException.class, () -> iter.seek(null));
-                    assertThrows(IllegalArgumentException.class, () -> iter.seek(new byte[0]));
-                    assertThrows(IllegalArgumentException.class, () -> iter.seekForPrev(null));
-                    assertThrows(IllegalArgumentException.class, () -> iter.seekForPrev(new byte[0]));
-                }
-            }
-        }
-    }
-
-    @Test
-    @Order(80)
-    void testIteratorOperationsAfterFree() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_iter_after_free").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                txn.put(cf, "k".getBytes(), "v".getBytes());
-                txn.commit();
-            }
-
-            try (Transaction txn = db.beginTransaction()) {
-                TidesDBIterator iter = txn.newIterator(cf);
-                iter.seekToFirst();
-                assertTrue(iter.isValid());
-                iter.free();
-
-                // isValid returns false after free
-                assertFalse(iter.isValid());
-
-                // All operations throw IllegalStateException after free
-                assertThrows(IllegalStateException.class, iter::seekToFirst);
-                assertThrows(IllegalStateException.class, iter::seekToLast);
-                assertThrows(IllegalStateException.class, () -> iter.seek("k".getBytes()));
-                assertThrows(IllegalStateException.class, () -> iter.seekForPrev("k".getBytes()));
-                assertThrows(IllegalStateException.class, iter::next);
-                assertThrows(IllegalStateException.class, iter::prev);
-                assertThrows(IllegalStateException.class, iter::key);
-                assertThrows(IllegalStateException.class, iter::value);
-                assertThrows(IllegalStateException.class, iter::keyValue);
-
-                // free() is idempotent -- no exception
-                assertDoesNotThrow(iter::free);
-                assertDoesNotThrow(iter::close);
-            }
-        }
-    }
-
-    @Test
-    @Order(81)
-    void testTransactionNullArgs() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_txn_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            try (Transaction txn = db.beginTransaction()) {
-                // put: null cf, null key, null value
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.put(null, "k".getBytes(), "v".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.put(cf, null, "v".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.put(cf, "k".getBytes(), null));
-
-                // get: null cf, null key
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.get(null, "k".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.get(cf, null));
-
-                // delete: null cf, null key
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.delete(null, "k".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.delete(cf, null));
-
-                // singleDelete: null cf, null key (already tested but grouped here)
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.singleDelete(null, "k".getBytes()));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.singleDelete(cf, null));
-
-                // newIterator: null cf
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.newIterator(null));
-            }
-        }
-    }
-
-    @Test
-    @Order(82)
-    void testTransactionSavepointNullAndEmpty() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_txn_sp_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-
-            try (Transaction txn = db.beginTransaction()) {
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.savepoint(null));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.savepoint(""));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.rollbackToSavepoint(null));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.rollbackToSavepoint(""));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.releaseSavepoint(null));
-                assertThrows(IllegalArgumentException.class,
-                    () -> txn.releaseSavepoint(""));
-            }
-        }
-    }
-
-    @Test
-    @Order(83)
-    void testTransactionOperationsAfterFree() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_txn_after_free").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            Transaction txn = db.beginTransaction();
-            txn.put(cf, "k".getBytes(), "v".getBytes());
-            txn.commit();
-            txn.free();
-
-            // All operations throw IllegalStateException after free
-            assertThrows(IllegalStateException.class,
-                () -> txn.put(cf, "k".getBytes(), "v".getBytes()));
-            assertThrows(IllegalStateException.class,
-                () -> txn.get(cf, "k".getBytes()));
-            assertThrows(IllegalStateException.class,
-                () -> txn.delete(cf, "k".getBytes()));
-            assertThrows(IllegalStateException.class,
-                () -> txn.singleDelete(cf, "k".getBytes()));
-            assertThrows(IllegalStateException.class, txn::commit);
-            assertThrows(IllegalStateException.class, txn::rollback);
-            assertThrows(IllegalStateException.class,
-                () -> txn.savepoint("sp"));
-            assertThrows(IllegalStateException.class,
-                () -> txn.rollbackToSavepoint("sp"));
-            assertThrows(IllegalStateException.class,
-                () -> txn.releaseSavepoint("sp"));
-            assertThrows(IllegalStateException.class,
-                () -> txn.newIterator(cf));
-            assertThrows(IllegalStateException.class,
-                () -> txn.reset(IsolationLevel.READ_COMMITTED));
-
-            // free() and close() are idempotent
-            assertDoesNotThrow(txn::free);
-            assertDoesNotThrow(txn::close);
-        }
-    }
-
-    @Test
-    @Order(84)
-    void testOpenWithObjectStoreConfig() throws TidesDBException {
-        Path osDir = tempDir.resolve("os_cfg_dir");
-        osDir.toFile().mkdirs();
-
-        ObjectStoreConfig osc = ObjectStoreConfig.builder()
-            .localCachePath(osDir.resolve("cache").toString())
-            .localCacheMaxBytes(1024 * 1024)
-            .cacheOnRead(true)
-            .cacheOnWrite(false)
-            .maxConcurrentUploads(2)
-            .maxConcurrentDownloads(4)
-            .multipartThreshold(1024 * 1024)
-            .multipartPartSize(256 * 1024)
-            .syncManifestToObject(false)
-            .replicateWal(false)
-            .walUploadSync(true)
-            .walSyncThresholdBytes(2048)
-            .walSyncOnCommit(true)
-            .replicaMode(false)
-            .replicaSyncIntervalUs(1000)
-            .replicaReplayWal(true)
-            .build();
-
-        Config config = Config.builder(tempDir.resolve("testdb_osc_cfg").toString())
-            .objectStoreFsPath(osDir.toString())
-            .objectStoreConfig(osc)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            assertNotNull(db);
-            DbStats dbStats = db.getDbStats();
-            assertNotNull(dbStats);
-            assertTrue(dbStats.isObjectStoreEnabled());
-        }
-    }
-
-    @Test
-    @Order(85)
-    void testOpenNullConfig() {
-        assertThrows(IllegalArgumentException.class, () -> TidesDB.open(null));
-    }
-
-    @Test
-    @Order(86)
-    void testOpenEmptyDbPath() {
-        Config config = Config.builder("").build();
-        assertThrows(IllegalArgumentException.class, () -> TidesDB.open(config));
-    }
-
-    @Test
-    @Order(87)
-    void testColumnFamilyUpdateRuntimeConfigNull() throws TidesDBException {
-        Config config = Config.builder(tempDir.resolve("testdb_cf_upd_null").toString())
-            .numFlushThreads(2)
-            .numCompactionThreads(2)
-            .logLevel(LogLevel.INFO)
-            .blockCacheSize(64 * 1024 * 1024)
-            .maxOpenSSTables(256)
-            .build();
-
-        try (TidesDB db = TidesDB.open(config)) {
-            db.createColumnFamily("test_cf", ColumnFamilyConfig.defaultConfig());
-            ColumnFamily cf = db.getColumnFamily("test_cf");
-
-            assertThrows(IllegalArgumentException.class,
-                () -> cf.updateRuntimeConfig(null, false));
         }
     }
 }
