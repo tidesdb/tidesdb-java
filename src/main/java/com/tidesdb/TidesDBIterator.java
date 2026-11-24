@@ -25,10 +25,21 @@ import java.io.Closeable;
  * Provides efficient bidirectional traversal over the underlying storage.
  *
  * <p>{@code TidesDBIterator} implements {@link java.io.Closeable} for use with
- * try-with-resources. Close iterators before the owning {@link Transaction} is
- * freed. After this iterator is freed, all operations except {@link #isValid()}
- * and {@code close()} throw {@link IllegalStateException}. The {@link #isValid()}
- * method returns {@code false} on a freed iterator.
+ * try-with-resources. After this iterator is freed, all operations except
+ * {@link #isValid()} and {@code close()} throw {@link IllegalStateException}.
+ * The {@link #isValid()} method returns {@code false} on a freed iterator.
+ *
+ * <p>An iterator may outlive its {@link Transaction}. Freeing or resetting the
+ * transaction detaches every iterator still open under it: {@link #isValid()}
+ * then returns {@code false}, every other method throws
+ * {@link TidesDBException} with {@link TidesDBException#ERR_INVALID_ARGS}, and
+ * {@code close()} is all that is left to do with it.
+ *
+ * <p>At {@link IsolationLevel#REPEATABLE_READ} and
+ * {@link IsolationLevel#SERIALIZABLE} an iterator records the interval it
+ * covered into its transaction's read footprint when it is closed, so the commit
+ * is refused if another transaction put a key inside it meanwhile. Close an
+ * iterator <em>before</em> committing; the other levels record nothing.
  *
  * <p>A scan reaches the same SSTables a point read does, so every method here
  * can fail with {@link TidesDBException#ERR_LOCKED} for the same reason and with
@@ -169,6 +180,26 @@ public class TidesDBIterator implements Closeable {
     }
     
     /**
+     * Retrieves the expiry of the entry at the current position, without another
+     * lookup or expiry check.
+     *
+     * <p>The result is an <strong>absolute</strong> deadline in unix seconds, not
+     * the relative {@code ttlSeconds} the entry was written with.
+     *
+     * @return the absolute expiry in unix seconds, or {@code -1} if the entry
+     *         never expires
+     * @throws IllegalStateException if this iterator is freed
+     * @throws TidesDBException with {@link TidesDBException#ERR_NOT_FOUND} when
+     *         the iterator is not positioned on an entry, or
+     *         {@link TidesDBException#ERR_INVALID_ARGS} when it was detached from
+     *         its transaction
+     */
+    public long ttl() throws TidesDBException {
+        checkNotFreed();
+        return nativeTtl(nativeHandle);
+    }
+
+    /**
      * Retrieves the current key and value from the iterator in a single call.
      * More efficient than calling {@link #key()} and {@link #value()} separately
      * as it requires only one JNI crossing.
@@ -218,6 +249,7 @@ public class TidesDBIterator implements Closeable {
     private static native void nativePrev(long handle) throws TidesDBException;
     private static native byte[] nativeKey(long handle) throws TidesDBException;
     private static native byte[] nativeValue(long handle) throws TidesDBException;
+    private static native long nativeTtl(long handle) throws TidesDBException;
     private static native KeyValue nativeKeyValue(long handle) throws TidesDBException;
     private static native void nativeFree(long handle);
 }

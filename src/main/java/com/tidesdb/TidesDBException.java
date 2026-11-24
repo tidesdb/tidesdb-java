@@ -141,6 +141,15 @@ public class TidesDBException extends Exception {
     public static final int ERR_TOO_OLD = -17;
 
     /**
+     * The database was opened by a process running as root (effective uid 0).
+     * The engine refuses this on every non-Windows platform, because the files it
+     * creates would be owned by root and a later open as a regular user would
+     * fail. Run as an unprivileged user; if the directory is already owned by
+     * root, {@code chown -R <user>:<group> <database_path>} it first.
+     */
+    public static final int ERR_ROOT_EXECUTION = -18;
+
+    /**
      * Creates an exception with a message and an unknown error code.
      *
      * @param message the detail message
@@ -247,6 +256,8 @@ public class TidesDBException extends Exception {
                 return "transaction aborted by request";
             case ERR_TOO_OLD:
                 return "sequence is no longer reconstructable";
+            case ERR_ROOT_EXECUTION:
+                return "cannot open as root; database files would be owned by root";
             default:
                 return "unknown error";
         }

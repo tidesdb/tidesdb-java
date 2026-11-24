@@ -239,7 +239,7 @@ public class ColumnFamilyConfig {
     }
 
     /**
-     * Returns whether a partition-range filter is built for point-get pruning.
+     * Returns whether a partitioned bloom filter is built for point-get pruning.
      *
      * @return {@code true} when the bloom filter is enabled
      */
@@ -468,7 +468,7 @@ public class ColumnFamilyConfig {
         }
 
         /**
-         * Sets whether a partition-range filter is built for point-get pruning.
+         * Sets whether a partitioned bloom filter is built for point-get pruning.
          *
          * @param enableBloomFilter {@code true} to enable the filter
          * @return this builder

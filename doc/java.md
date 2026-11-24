@@ -17,13 +17,52 @@ If you want to download the source of this document, you can find it [here](http
 
 You **must** have the TidesDB shared C library installed on your system. You can find the installation instructions [here](/reference/building/#_top).
 
-This binding targets **TidesDB 10.x**. It does not work against a 9.x library: the two have different public APIs and different on-disk formats.
+This binding targets **TidesDB 10.2.0 or newer**. Version 1.1.0 calls
+`tidesdb_txn_get_ttl` and `tidesdb_iter_ttl`, which first shipped in 10.2.0, so
+the JNI library will not build or load against 10.0.x or 10.1.x; stay on
+tidesdb-java 1.0.x for those. It does not work against a 9.x library at all: the
+two have different public APIs and different on-disk formats.
 
 ## Requirements
 
 - Java 11 or higher
-- Maven 3.9.6+
-- TidesDB 10.x native library installed on the system
+- Maven 3.9.6+ (the bundled `./mvnw` wrapper fetches a suitable one)
+- TidesDB 10.2.0+ native library installed on the system
+- A non-root user on Linux, macOS and the BSDs (see [Running as root](#running-as-root))
+
+### Running as root
+
+TidesDB refuses to open a database from a process whose effective uid is 0,
+throwing `TidesDBException` with `ERR_ROOT_EXECUTION`. The files it would create
+would be owned by root, and a later open as a regular user would fail. This is
+common in containers, whose default user is root: add a `USER` to the image, or
+run with `--user`. If a database directory is already owned by root, hand it to
+the intended user first with `chown -R <user>:<group> <database_path>`. The check
+does not apply on Windows. (The refusal ships in the TidesDB release after
+10.2.1; on 10.2.x a root process still opens, and it is still a bad idea.)
+
+### TidesDB built with jemalloc, tcmalloc or mimalloc
+
+When the native library links a replacement allocator, every buffer it hands
+back is freed with `tidesdb_free`, which the binding always does, so the
+allocators never mix. Loading is the catch: the JVM loads `libtidesdb_jni`
+with `dlopen`, and the distribution builds of jemalloc (and tcmalloc) use
+initial-exec thread-local storage, which a library loaded that late cannot get.
+The load fails with:
+
+```
+UnsatisfiedLinkError: ... libjemalloc.so.2: cannot allocate memory in static TLS block
+```
+
+Preload the allocator so it is mapped when the process starts:
+
+```bash
+export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2   # path varies by distro
+java -Djava.library.path=/usr/local/lib -jar app.jar
+```
+
+or, for the test suite, `LD_PRELOAD=... ./mvnw test`. On macOS the equivalent is
+`DYLD_INSERT_LIBRARIES`, though Homebrew's jemalloc does not need it.
 
 ### Building the JNI Library
 
@@ -42,7 +81,7 @@ sudo cmake --install build
 <dependency>
     <groupId>com.tidesdb</groupId>
     <artifactId>tidesdb-java</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -198,6 +237,38 @@ try (Transaction txn = db.beginTransaction()) {
 > **Changed in 1.0.0.** In 0.8.x the TTL argument was an absolute Unix timestamp
 > and `-1` meant no expiry. It is now a relative duration in seconds.
 
+#### Reading an Entry's Expiry
+
+`getTtl` reads the expiry of the key the transaction can see, its own pending
+writes included. It goes through the transaction's snapshot and read tracking
+like `get` does. An iterator reads the expiry of the entry it stands on with
+`ttl()`, without another lookup.
+
+Both return the **absolute** deadline in Unix seconds that the engine stored,
+not the relative duration passed to `put`. `-1` means the entry never expires.
+
+```java
+try (Transaction txn = db.beginTransaction()) {
+    Long expiry = txn.getTtl(cf, "session".getBytes());
+    if (expiry == null) {
+        // missing, deleted or already expired
+    } else if (expiry == -1) {
+        // never expires
+    } else {
+        long secondsLeft = expiry - System.currentTimeMillis() / 1000;
+    }
+    txn.rollback();
+}
+
+try (Transaction txn = db.beginTransaction();
+     TidesDBIterator it = txn.newIterator(cf)) {
+    for (it.seekToFirst(); it.isValid(); it.next()) {
+        long expiry = it.ttl();   // -1 for no expiry
+    }
+    txn.rollback();
+}
+```
+
 #### Reading Data
 
 ```java
@@ -306,9 +377,29 @@ try (Transaction txn = db.beginTransaction()) {
 |---|---|
 | `READ_UNCOMMITTED` | Every version is visible, including sequences still in progress. |
 | `READ_COMMITTED` | The newest committed version, with the ceiling re-read on every operation. |
-| `REPEATABLE_READ` | The ceiling is frozen at begin; a commit validates that every key it read still holds the version it read. |
-| `SNAPSHOT` | Frozen ceiling, and a commit reserves each key it writes on a first-committer-wins basis. |
-| `SERIALIZABLE` | Both of the above checks, plus the one that catches write skew. |
+| `REPEATABLE_READ` | The ceiling is frozen at begin; a commit validates that every key it read still holds the version it read and that no key appeared inside a range it scanned, against commits still in flight as well as committed ones. |
+| `SNAPSHOT` | Frozen ceiling, and a commit claims each key it writes on a first-committer-wins basis rather than validating what it read. |
+| `SERIALIZABLE` | Both of the above checks. |
+
+Only the levels above `READ_COMMITTED` can be refused with `ERR_CONFLICT`.
+`DbStats.getTxnConflicts()` against `getTxnCommits()` is the retry rate they are
+costing you.
+
+At `REPEATABLE_READ` and `SERIALIZABLE`, a scanned range enters the read
+footprint **when its iterator is closed**. Close iterators before calling
+`commit()`, or the range goes unvalidated. A try-with-resources block that
+commits inside it closes the iterator too late:
+
+```java
+// the range is validated: the iterator closes before the commit
+try (Transaction txn = db.beginTransaction(IsolationLevel.SERIALIZABLE)) {
+    try (TidesDBIterator it = txn.newIterator(cf)) {
+        for (it.seekToFirst(); it.isValid(); it.next()) { /* ... */ }
+    }
+    txn.put(cf, key, value);
+    txn.commit();
+}
+```
 
 ```java
 try (Transaction txn = db.beginTransaction(IsolationLevel.SERIALIZABLE)) {
@@ -494,8 +585,14 @@ long floor = db.getOldestReadableSeq(); // the oldest sequence still accepted
 
 ### Iterating Over Data
 
-Iterators are created from a transaction and read at its snapshot. Close them
-before freeing the transaction.
+Iterators are created from a transaction and read at its snapshot.
+
+An iterator may outlive its transaction. Freeing or resetting the transaction
+detaches every iterator still open under it: `isValid()` then returns `false`,
+every other call throws `TidesDBException` with `ERR_INVALID_ARGS`, and
+`close()` is all that is left to do with it. At `REPEATABLE_READ` and
+`SERIALIZABLE`, close iterators before committing (see
+[Transaction Isolation Levels](#transaction-isolation-levels)).
 
 `isValid()` is the single way to ask whether the cursor is on an entry — every
 positioning call leaves the iterator invalid rather than throwing when the merged
@@ -692,10 +789,13 @@ database.
 db.backup("/path/to/backup");
 ```
 
-Flushes the memtable, then copies the manifest, the shared value log, and every
-SSTable it references at a single manifest snapshot while compaction is held off,
-so the copy references no file a merge could delete mid-copy. The result is
-directly openable:
+Writes a copy of the committed database state. The destination must not exist
+or must be empty. Writers wait while the backup drains in-flight writes, flushes,
+and captures the manifest and file lengths. Writes resume **before** the data
+files are copied, so a long copy does not stall the application. A commit,
+prepare or `commitPrepared` that reaches that short admission window and waits
+past its timeout fails with `ERR_LOCKED`, which can be retried; a prepared
+transaction stays prepared. The result is directly openable:
 
 ```java
 try (TidesDB restored = TidesDB.open(Config.builder("/path/to/backup").build())) {
@@ -772,6 +872,8 @@ System.out.println("L0 queue depth: " + stats.getImmutableMemtableCount());
 System.out.println("MVCC clock: " + stats.getGlobalSeq());
 System.out.println("gc floor: " + stats.getMinSnapshotSeq());
 System.out.println("live transactions: " + stats.getActiveTxnCount());
+System.out.println("commits: " + stats.getTxnCommits());
+System.out.println("conflicts: " + stats.getTxnConflicts());
 System.out.println("memtable bytes: " + stats.getMemtableBytes());
 
 // write amplification terms
@@ -793,8 +895,15 @@ System.out.println("stall time (us): " + stats.getWriteStallUs());
 System.out.println("ceiling hits: " + stats.getWriteStallCeilingHits());
 ```
 
-`getMinSnapshotSeq()` is unsigned: when nothing holds the floor it sits at
-`UINT64_MAX` and reads as `-1` in Java.
+`getMinSnapshotSeq()` is the oldest frozen snapshot any live transaction holds at
+repeatable-read or stronger, the part of the reclamation floor a long transaction
+holds down. It is unsigned: when nothing holds the floor it sits at `UINT64_MAX`
+and reads as `-1` in Java. `getActiveTxnCount()` counts read-committed and
+stronger transactions.
+
+`getTxnCommits()` and `getTxnConflicts()` count since the database opened. A
+conflict rate that climbs under a workload that did not change is contention
+worth looking at.
 
 `getVlogLiveBytes()` is the figure space amplification is against — a store can
 hold many gigabytes of values no tree can reach, and only this tells them apart
@@ -957,7 +1066,7 @@ deliberately rather than leave.
 | `keepValuesInline` | `boolean` | Hold every value in the key log whatever its size, ignoring the database threshold. |
 | `btreeKlogBlockSize` | `long` | Target size of a btree key-log node; 0 leaves the choice to the btree. |
 | `encodingPipeline` | `int[]` | Encoding ids applied in order, at most 8. |
-| `enableBloomFilter` | `boolean` | Build a partition-range filter for point-get pruning. |
+| `enableBloomFilter` | `boolean` | Build a partitioned bloom filter for point-get pruning. |
 | `bloomFpr` | `double` | Target false-positive rate when the filter is enabled. |
 | `defaultIsolationLevel` | `IsolationLevel` | Isolation for a transaction opened without an explicit level. |
 | `l1FileCountTrigger` | `int` | L1 SSTable count that triggers compaction. |
@@ -1027,6 +1136,7 @@ call; `TidesDB.strerror(code)` asks the library for its own description.
 | `ERR_NO_SPACE` | -15 | The device or filesystem is out of space. |
 | `ERR_TXN_ABORTED` | -16 | Aborted from outside through `requestAbort()`. |
 | `ERR_TOO_OLD` | -17 | The point in time asked for is no longer reconstructable. |
+| `ERR_ROOT_EXECUTION` | -18 | The database was opened by a root process. Run as an unprivileged user. |
 
 ### Retrying on Contention
 
@@ -1055,6 +1165,23 @@ for (int attempt = 0; ; attempt++) {
 `ERR_NO_SPACE` is distinct from `ERR_IO` because it says what to do about it:
 the data is intact and the operation succeeds once space is freed, where an I/O
 error carries no such promise.
+
+## What's New in 1.1.0
+
+1.1.0 tracks TidesDB 10.2 and needs at least 10.2.0. It adds API and changes no
+existing signature, so code written for 1.0.x compiles unchanged.
+
+- `Transaction.getTtl(cf, key)` and `TidesDBIterator.ttl()` read an entry's
+  absolute expiry.
+- `DbStats.getTxnCommits()` and `DbStats.getTxnConflicts()`. The `DbStats`
+  constructor without them is deprecated.
+- `TidesDBException.ERR_ROOT_EXECUTION` (-18).
+- Documented engine behaviour that changed since 10.0: iterators may outlive
+  their transaction and are detached when it is freed or reset; range scans at
+  repeatable-read and serializable are validated at commit once the iterator is
+  closed; `backup()` needs an absent or empty directory and only holds writers
+  during admission; commits and prepares can report `ERR_LOCKED` while a backup
+  is admitting.
 
 ## Migrating from 0.8.x
 
@@ -1131,6 +1258,9 @@ statistics families.
 
 # Point the JVM at a locally built JNI library
 ./mvnw test -Dtest.jvm.args="-Djava.library.path=/usr/local/lib"
+
+# TidesDB built with jemalloc: preload it, or the JNI library fails to load
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 ./mvnw test
 ```
 
 ## Building from Source

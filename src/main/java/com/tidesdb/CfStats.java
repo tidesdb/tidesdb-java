@@ -372,8 +372,9 @@ public class CfStats {
     }
 
     /**
-     * Returns the memory this family's partition range filters hold outside the
-     * block cache. The filter bit arrays themselves are not counted here: those
+     * Returns the memory this family's partitioned bloom filters hold outside
+     * the block cache: one routing directory per SSTable, holding each
+     * partition's offset and its whole first key. The filter bit arrays themselves are not counted here: those
      * are fetched per probe and live in the cache. A directory is built on a
      * table's first probe, so this reads zero for a family nothing has read from
      * yet and rises as tables are touched.

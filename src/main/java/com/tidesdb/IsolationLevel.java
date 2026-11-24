@@ -19,33 +19,46 @@
 package com.tidesdb;
 
 /**
- * Transaction isolation level. Each constant maps to an integer used by the
- * JNI bridge.
+ * Transaction isolation level, weakest to strongest. Each constant maps to an
+ * integer used by the JNI bridge.
+ *
+ * <p>Only the levels above {@link #READ_COMMITTED} can have a commit refused
+ * with {@link TidesDBException#ERR_CONFLICT}; {@link DbStats#getTxnConflicts()}
+ * counts those refusals.
  */
 public enum IsolationLevel {
 
     /**
-     * Reads may see uncommitted changes from other transactions.
+     * Every version is visible, including sequences still in progress.
      */
     READ_UNCOMMITTED(0),
 
     /**
-     * Reads see only committed data (default).
+     * The newest committed version, with the read ceiling re-read on every
+     * operation. This is the default.
      */
     READ_COMMITTED(1),
 
     /**
-     * Reads within a transaction see a consistent snapshot from its start.
+     * The read ceiling is frozen when the transaction begins, and a commit
+     * validates that every key it read still holds the version it read and that
+     * no key appeared inside a range it scanned, against commits still in flight
+     * as well as committed ones.
+     *
+     * <p>A scanned range is recorded when its iterator is freed, so close
+     * iterators before committing.
      */
     REPEATABLE_READ(2),
 
     /**
-     * Reads operate against a named snapshot.
+     * Frozen read ceiling, and a commit claims each key it writes on a
+     * first-committer-wins basis rather than validating what it read.
      */
     SNAPSHOT(3),
 
     /**
-     * Full serializable isolation.
+     * Both the {@link #REPEATABLE_READ} read validation and the
+     * {@link #SNAPSHOT} write claim.
      */
     SERIALIZABLE(4);
     
