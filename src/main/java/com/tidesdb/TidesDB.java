@@ -520,19 +520,24 @@ public class TidesDB implements Closeable {
     }
 
     /**
-     * Writes a consistent, directly-openable copy of the database into
-     * {@code dir}: flushes the memtable, then copies the manifest, the shared
-     * value log, and every SSTable it references at a single manifest snapshot
-     * while compaction is held off, so the copy references no file that a merge
-     * could delete mid-copy.
+     * Writes a directly-openable copy of the committed database state into
+     * {@code dir}. Writers wait while the backup drains in-flight writes,
+     * flushes, and captures the manifest and file lengths; writes resume before
+     * the data files are copied, so the copy itself does not hold writers up.
      *
-     * @param dir the destination directory, created if absent; must not be
-     *        {@code null} or empty
+     * <p>A commit or prepare that arrives during that admission window can fail
+     * with {@link TidesDBException#ERR_LOCKED} if the wait times out; it is safe
+     * to retry.
+     *
+     * @param dir the destination directory, which must not exist or must be
+     *        empty; must not be {@code null} or empty
      * @throws IllegalArgumentException if {@code dir} is {@code null} or empty
      * @throws IllegalStateException if this database is closed
      * @throws TidesDBException if the backup fails, including
-     *         {@link TidesDBException#ERR_LOCKED} if a family stayed under
-     *         compaction for the whole freeze window
+     *         {@link TidesDBException#ERR_LOCKED} when the transaction or
+     *         maintenance wait expires, or
+     *         {@link TidesDBException#ERR_INVALID_ARGS} when {@code dir} exists
+     *         and is not empty
      */
     public void backup(String dir) throws TidesDBException {
         checkNotClosed();

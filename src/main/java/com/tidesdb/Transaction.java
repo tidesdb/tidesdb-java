@@ -259,6 +259,35 @@ public class Transaction implements Closeable {
     }
 
     /**
+     * Reads the expiry of the key visible to this transaction, its own pending
+     * writes included, using the transaction's snapshot and read tracking (the
+     * read is recorded into the conflict footprint, as with
+     * {@link #get(ColumnFamily, byte[])}).
+     *
+     * <p>The result is an <strong>absolute</strong> deadline in unix seconds,
+     * the one the engine stored, not the relative {@code ttlSeconds} passed to
+     * {@link #put(ColumnFamily, byte[], byte[], long)}.
+     *
+     * @param cf the target column family; must not be {@code null}
+     * @param key the key; must not be {@code null} or empty
+     * @return the absolute expiry in unix seconds, {@code -1} if the key never
+     *         expires, or {@code null} if the key is missing, deleted or expired
+     * @throws IllegalArgumentException if {@code cf} is {@code null}, or
+     *         {@code key} is {@code null} or empty
+     * @throws IllegalStateException if this transaction is freed
+     * @throws TidesDBException if the native read fails, including
+     *         {@link TidesDBException#ERR_LOCKED} when contention left the read
+     *         unservable and it should be retried
+     */
+    public Long getTtl(ColumnFamily cf, byte[] key) throws TidesDBException {
+        checkNotFreed();
+        requireCf(cf);
+        requireKey(key);
+        long ttl = nativeGetTtl(nativeHandle, cf.getNativeHandle(), key);
+        return ttl == Long.MIN_VALUE ? null : ttl;
+    }
+
+    /**
      * Non-tracking existence check at the transaction snapshot.
      *
      * @param cf the target column family; must not be {@code null}
@@ -302,7 +331,13 @@ public class Transaction implements Closeable {
     /**
      * Creates an iterator over a column family at this transaction's snapshot.
      *
-     * <p>Close the returned iterator before freeing this transaction.
+     * <p>At {@link IsolationLevel#REPEATABLE_READ} and
+     * {@link IsolationLevel#SERIALIZABLE} the interval an iterator covered is
+     * recorded into this transaction's read footprint when the iterator is
+     * closed, so close it <em>before</em> {@link #commit()} for the commit to
+     * catch a key another transaction put inside that range. The iterator may
+     * outlive the transaction: freeing or resetting the transaction detaches it,
+     * after which it is no longer valid and only {@code close()} is useful.
      *
      * @param cf the column family to iterate; must not be {@code null}
      * @return a new iterator
@@ -363,11 +398,18 @@ public class Transaction implements Closeable {
      * Commits the transaction, writing its batch to the write-ahead log and
      * memtable.
      *
+     * <p>At repeatable-read and serializable, close every iterator opened under
+     * this transaction first; a range is only validated once its iterator has
+     * been closed.
+     *
      * @throws IllegalStateException if this transaction is freed
      * @throws TidesDBException with {@link TidesDBException#ERR_CONFLICT} when
-     *         another transaction committed a conflicting write first, or
+     *         another transaction committed a conflicting write first,
      *         {@link TidesDBException#ERR_TXN_ABORTED} when an outside authority
-     *         aborted it through {@link #requestAbort()}
+     *         aborted it through {@link #requestAbort()}, or
+     *         {@link TidesDBException#ERR_LOCKED} if a concurrent
+     *         {@link TidesDB#backup(String)} kept the commit waiting past its
+     *         admission timeout, in which case it can be retried
      */
     public void commit() throws TidesDBException {
         checkNotFreed();
@@ -435,7 +477,7 @@ public class Transaction implements Closeable {
 
     /**
      * Resets this transaction for reuse at a new isolation level, discarding its
-     * buffered state. This avoids the cost of freeing and reallocating
+     * buffered state and detaching any iterators still open under it. This avoids the cost of freeing and reallocating
      * transaction resources in hot loops.
      *
      * @param isolation the isolation level for the reset transaction; must not be
@@ -483,7 +525,11 @@ public class Transaction implements Closeable {
      *        or empty
      * @throws IllegalArgumentException if {@code xid} is {@code null} or empty
      * @throws IllegalStateException if this transaction is freed
-     * @throws TidesDBException if the prepare fails
+     * @throws TidesDBException if the prepare fails, including
+     *         {@link TidesDBException#ERR_CONFLICT}, or
+     *         {@link TidesDBException#ERR_LOCKED} if a concurrent
+     *         {@link TidesDB#backup(String)} kept it waiting past its admission
+     *         timeout
      */
     public void prepare(byte[] xid) throws TidesDBException {
         checkNotFreed();
@@ -501,7 +547,10 @@ public class Transaction implements Closeable {
      *
      * @throws IllegalStateException if this transaction is freed
      * @throws TidesDBException with {@link TidesDBException#ERR_INVALID_ARGS} if
-     *         the transaction is not prepared
+     *         the transaction is not prepared, or
+     *         {@link TidesDBException#ERR_LOCKED} if a concurrent
+     *         {@link TidesDB#backup(String)} kept it waiting past its admission
+     *         timeout; the transaction stays prepared and can be retried
      */
     public void commitPrepared() throws TidesDBException {
         checkNotFreed();
@@ -633,6 +682,8 @@ public class Transaction implements Closeable {
     private static native byte[] nativeGet(long handle, long cfHandle, byte[] key) throws TidesDBException;
 
     private static native byte[] nativeGetNoTrack(long handle, long cfHandle, byte[] key) throws TidesDBException;
+
+    private static native long nativeGetTtl(long handle, long cfHandle, byte[] key) throws TidesDBException;
 
     private static native boolean nativeContains(long handle, long cfHandle, byte[] key) throws TidesDBException;
 

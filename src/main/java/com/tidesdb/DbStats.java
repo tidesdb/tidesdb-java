@@ -35,6 +35,8 @@ public class DbStats {
     private final long minSnapshotSeq;
     private final int activeTxnCount;
     private final long txnMemoryBytes;
+    private final long txnCommits;
+    private final long txnConflicts;
     private final long memtableBytes;
     private final boolean flushing;
     private final long nextCfIndex;
@@ -64,6 +66,37 @@ public class DbStats {
     private final long writeStallCeilingHits;
 
     /**
+     * Creates database statistics without the transaction outcome counters,
+     * which read as zero. Kept so code written against 1.0.x still compiles.
+     *
+     * @deprecated use the constructor that also takes {@code txnCommits} and
+     *             {@code txnConflicts}
+     */
+    @Deprecated
+    public DbStats(int numColumnFamilies, int immutableMemtableCount, int compactionPendingCount,
+                   int totalSstableCount, long totalDataSizeBytes, int numOpenSstables,
+                   long globalSeq, long minSnapshotSeq, int activeTxnCount, long txnMemoryBytes,
+                   long memtableBytes, boolean flushing, long nextCfIndex, long walGeneration,
+                   long flushCount, long compactionCount, long flushBytesWritten,
+                   long compactionBytesWritten, long compactionBytesRead, long walBytesWritten,
+                   long userBytesWritten, long vlogFileSize, long vlogValueCount,
+                   long vlogUsedBytes, long vlogStoredBytes, long vlogLiveBytes,
+                   long vlogSegmentCount, long vlogBytesWritten, long vlogDeadBytes,
+                   long vlogReclaimCalls, long vlogReclaimPasses, long vlogSegmentsRetired,
+                   long vlogSegmentsDrainable, long writesThrottled, long writesBlocked,
+                   long writeStallUs, long writeStallCeilingHits) {
+        this(numColumnFamilies, immutableMemtableCount, compactionPendingCount,
+             totalSstableCount, totalDataSizeBytes, numOpenSstables, globalSeq, minSnapshotSeq,
+             activeTxnCount, txnMemoryBytes, 0L, 0L, memtableBytes, flushing, nextCfIndex,
+             walGeneration, flushCount, compactionCount, flushBytesWritten,
+             compactionBytesWritten, compactionBytesRead, walBytesWritten, userBytesWritten,
+             vlogFileSize, vlogValueCount, vlogUsedBytes, vlogStoredBytes, vlogLiveBytes,
+             vlogSegmentCount, vlogBytesWritten, vlogDeadBytes, vlogReclaimCalls,
+             vlogReclaimPasses, vlogSegmentsRetired, vlogSegmentsDrainable, writesThrottled,
+             writesBlocked, writeStallUs, writeStallCeilingHits);
+    }
+
+    /**
      * Creates a new {@code DbStats}. Typically called by the JNI bridge rather
      * than application code.
      *
@@ -74,13 +107,17 @@ public class DbStats {
      * @param totalDataSizeBytes on-disk key-log bytes summed across every family
      * @param numOpenSstables currently open SSTable file handles
      * @param globalSeq current database-global sequence number
-     * @param minSnapshotSeq the oldest live-transaction snapshot
+     * @param minSnapshotSeq the oldest frozen snapshot any live transaction holds
      * @param activeTxnCount live transactions joined to the registry
      * @param txnMemoryBytes bytes held by in-flight transactions
+     * @param txnCommits transactions committed since the database opened
+     * @param txnConflicts commits and prepares refused with a conflict since the
+     *        database opened
      * @param memtableBytes memory the active memtable occupies
      * @param flushing whether an immutable is queued or flushing
      * @param nextCfIndex next column family id to be assigned
-     * @param walGeneration current write-ahead-log generation counter
+     * @param walGeneration the generation of the write-ahead log the active
+     *        memtable appends to
      * @param flushCount SSTables flushed across every family
      * @param compactionCount compactions run across every family
      * @param flushBytesWritten flush output bytes summed across every family
@@ -108,7 +145,7 @@ public class DbStats {
     public DbStats(int numColumnFamilies, int immutableMemtableCount, int compactionPendingCount,
                    int totalSstableCount, long totalDataSizeBytes, int numOpenSstables,
                    long globalSeq, long minSnapshotSeq, int activeTxnCount, long txnMemoryBytes,
-                   long memtableBytes, boolean flushing, long nextCfIndex, long walGeneration,
+                   long txnCommits, long txnConflicts, long memtableBytes, boolean flushing, long nextCfIndex, long walGeneration,
                    long flushCount, long compactionCount, long flushBytesWritten,
                    long compactionBytesWritten, long compactionBytesRead, long walBytesWritten,
                    long userBytesWritten, long vlogFileSize, long vlogValueCount,
@@ -127,6 +164,8 @@ public class DbStats {
         this.minSnapshotSeq = minSnapshotSeq;
         this.activeTxnCount = activeTxnCount;
         this.txnMemoryBytes = txnMemoryBytes;
+        this.txnCommits = txnCommits;
+        this.txnConflicts = txnConflicts;
         this.memtableBytes = memtableBytes;
         this.flushing = flushing;
         this.nextCfIndex = nextCfIndex;
@@ -223,8 +262,11 @@ public class DbStats {
     }
 
     /**
-     * Returns the oldest live-transaction snapshot, which is the compaction
-     * garbage-collection floor.
+     * Returns the oldest frozen snapshot any live transaction holds, at
+     * repeatable-read and stronger: the part of the reclamation floor that a
+     * long transaction holds down. A collection's floor also honours the ceiling
+     * of every read-committed read in flight, but only for the duration of that
+     * read.
      *
      * <p>The engine's sequence is an unsigned 64-bit value, so when no snapshot
      * is registered the floor sits at {@code UINT64_MAX} and arrives here as
@@ -240,8 +282,9 @@ public class DbStats {
 
     /**
      * Returns the live transactions joined to the registry, which is
-     * repeatable-read and stronger only. Read-uncommitted and read-committed
-     * transactions need no snapshot reservation and so are not counted.
+     * read-committed and stronger. Read-uncommitted transactions resolve to the
+     * newest version, which no collection drops, so they hold nothing and are
+     * not counted.
      *
      * @return the active transaction count
      */
@@ -257,6 +300,30 @@ public class DbStats {
      */
     public long getTxnMemoryBytes() {
         return txnMemoryBytes;
+    }
+
+    /**
+     * Returns the transactions committed since the database opened, single-phase
+     * and phase two of a two-phase commit together.
+     *
+     * @return the commit count
+     */
+    public long getTxnCommits() {
+        return txnCommits;
+    }
+
+    /**
+     * Returns the commits and prepares refused with
+     * {@link TidesDBException#ERR_CONFLICT} since the database opened. Only the
+     * levels above read-committed can be refused, so read against
+     * {@link #getTxnCommits()} this is the retry rate those levels are paying; a
+     * rate that climbs under a workload that did not change is contention worth
+     * looking at.
+     *
+     * @return the conflict count
+     */
+    public long getTxnConflicts() {
+        return txnConflicts;
     }
 
     /**
@@ -289,7 +356,8 @@ public class DbStats {
     }
 
     /**
-     * Returns the current write-ahead-log generation counter.
+     * Returns the generation of the write-ahead log the active memtable appends
+     * to.
      *
      * @return the WAL generation
      */
@@ -539,6 +607,8 @@ public class DbStats {
             ", minSnapshotSeq=" + minSnapshotSeq +
             ", activeTxnCount=" + activeTxnCount +
             ", txnMemoryBytes=" + txnMemoryBytes +
+            ", txnCommits=" + txnCommits +
+            ", txnConflicts=" + txnConflicts +
             ", memtableBytes=" + memtableBytes +
             ", flushing=" + flushing +
             ", nextCfIndex=" + nextCfIndex +

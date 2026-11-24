@@ -575,6 +575,103 @@ public class TidesDBTest {
                 assertNull(read(db, cf, "brief"), "the entry is past its deadline");
             }
         }
+
+        @Test
+        void readsAnAbsoluteExpiryThroughTheTransaction() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-get", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                long before = System.currentTimeMillis() / 1000;
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("expiring"), b("v"), 3600);
+                    txn.put(cf, b("forever"), b("v"));
+                    txn.commit();
+                }
+                long after = System.currentTimeMillis() / 1000;
+
+                try (Transaction txn = db.beginTransaction()) {
+                    Long expiry = txn.getTtl(cf, b("expiring"));
+                    assertNotNull(expiry);
+                    assertTrue(expiry >= before + 3600 && expiry <= after + 3600 + 1,
+                        "the deadline is absolute, one hour from the write: " + expiry);
+                    assertEquals(Long.valueOf(-1), txn.getTtl(cf, b("forever")));
+                    assertNull(txn.getTtl(cf, b("missing")));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void readsTheExpiryOfAPendingWrite() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-pending", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("pending"), b("v"), 60);
+                    Long expiry = txn.getTtl(cf, b("pending"));
+                    assertNotNull(expiry, "the transaction sees its own write");
+                    assertTrue(expiry > System.currentTimeMillis() / 1000);
+                    txn.delete(cf, b("pending"));
+                    assertNull(txn.getTtl(cf, b("pending")), "a pending delete hides it");
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void reportsNoExpiryForAnExpiredEntry() throws Exception {
+            try (TidesDB db = openWithCf("ttl-get-expired", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("brief"), b("v"), 1);
+                    txn.commit();
+                }
+                Thread.sleep(2500);
+                try (Transaction txn = db.beginTransaction()) {
+                    assertNull(txn.getTtl(cf, b("brief")));
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void readsTheExpiryAtTheIteratorPosition() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-iter", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    txn.put(cf, b("a"), b("v"), 3600);
+                    txn.put(cf, b("b"), b("v"));
+                    txn.commit();
+                }
+                try (Transaction txn = db.beginTransaction();
+                     TidesDBIterator it = txn.newIterator(cf)) {
+                    it.seekToFirst();
+                    assertTrue(it.isValid());
+                    assertEquals("a", s(it.key()));
+                    long expiry = it.ttl();
+                    assertTrue(expiry > System.currentTimeMillis() / 1000 + 3000);
+                    it.next();
+                    assertEquals("b", s(it.key()));
+                    assertEquals(-1, it.ttl());
+                    it.next();
+                    assertFalse(it.isValid());
+                    TidesDBException e = assertThrows(TidesDBException.class, it::ttl);
+                    assertEquals(TidesDBException.ERR_NOT_FOUND, e.getErrorCode());
+                    txn.rollback();
+                }
+            }
+        }
+
+        @Test
+        void rejectsBadTtlArguments() throws TidesDBException {
+            try (TidesDB db = openWithCf("ttl-args", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                try (Transaction txn = db.beginTransaction()) {
+                    assertThrows(IllegalArgumentException.class, () -> txn.getTtl(null, b("k")));
+                    assertThrows(IllegalArgumentException.class, () -> txn.getTtl(cf, null));
+                    assertThrows(IllegalArgumentException.class, () -> txn.getTtl(cf, new byte[0]));
+                    txn.rollback();
+                }
+            }
+        }
     }
 
     @Nested
@@ -842,6 +939,48 @@ public class TidesDBTest {
                 }
             }
         }
+
+        @Test
+        void detachesWhenItsTransactionIsFreed() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-detach-free", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k", "v");
+
+                TidesDBIterator it;
+                try (Transaction txn = db.beginTransaction()) {
+                    it = txn.newIterator(cf);
+                    it.seekToFirst();
+                    assertTrue(it.isValid());
+                }
+                try {
+                    assertFalse(it.isValid(), "a detached iterator is never valid");
+                    TidesDBException e = assertThrows(TidesDBException.class, it::key);
+                    assertEquals(TidesDBException.ERR_INVALID_ARGS, e.getErrorCode());
+                    e = assertThrows(TidesDBException.class, it::seekToFirst);
+                    assertEquals(TidesDBException.ERR_INVALID_ARGS, e.getErrorCode());
+                } finally {
+                    it.close();
+                }
+            }
+        }
+
+        @Test
+        void detachesWhenItsTransactionIsReset() throws TidesDBException {
+            try (TidesDB db = openWithCf("iter-detach-reset", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k", "v");
+
+                try (Transaction txn = db.beginTransaction()) {
+                    TidesDBIterator it = txn.newIterator(cf);
+                    it.seekToFirst();
+                    assertTrue(it.isValid());
+                    txn.reset(IsolationLevel.READ_COMMITTED);
+                    assertFalse(it.isValid());
+                    it.close();
+                    txn.rollback();
+                }
+            }
+        }
     }
 
     @Nested
@@ -889,6 +1028,31 @@ public class TidesDBTest {
                     assertEquals(TidesDBException.ERR_CONFLICT, e.getErrorCode());
                 }
                 assertEquals("first", read(db, cf, "contended"));
+            }
+        }
+
+        @Test
+        void refusesACommitWhenAKeyAppearsInAScannedRange() throws TidesDBException {
+            for (IsolationLevel level : new IsolationLevel[] {
+                    IsolationLevel.REPEATABLE_READ, IsolationLevel.SERIALIZABLE}) {
+                try (TidesDB db = openWithCf("iso-phantom-" + level, "cf")) {
+                    ColumnFamily cf = db.getColumnFamily("cf");
+                    write(db, cf, "a", "v");
+                    write(db, cf, "c", "v");
+
+                    try (Transaction scanner = db.beginTransaction(level)) {
+                        try (TidesDBIterator it = scanner.newIterator(cf)) {
+                            for (it.seekToFirst(); it.isValid(); it.next()) {
+                                // read the whole family
+                            }
+                        }
+                        write(db, cf, "b", "phantom");
+                        scanner.put(cf, b("summary"), b("2 keys"));
+                        TidesDBException e = assertThrows(TidesDBException.class, scanner::commit,
+                            level + " validates the scanned range");
+                        assertEquals(TidesDBException.ERR_CONFLICT, e.getErrorCode());
+                    }
+                }
             }
         }
 
@@ -1390,6 +1554,31 @@ public class TidesDBTest {
         }
 
         @Test
+        void refusesABackupIntoANonEmptyDirectory() throws Exception {
+            Path backupDir = tempDir.resolve("occupied");
+            Files.createDirectories(backupDir);
+            Files.write(backupDir.resolve("stray"), b("x"));
+            try (TidesDB db = openWithCf("maint-backup-occupied", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
+                assertThrows(TidesDBException.class, () -> db.backup(backupDir.toString()));
+            }
+        }
+
+        @Test
+        void backsUpIntoAnExistingEmptyDirectory() throws Exception {
+            Path backupDir = tempDir.resolve("empty-target");
+            Files.createDirectories(backupDir);
+            try (TidesDB db = openWithCf("maint-backup-empty", "cf")) {
+                write(db, db.getColumnFamily("cf"), "k", "v");
+                db.backup(backupDir.toString());
+            }
+            try (TidesDB restored = TidesDB.open(
+                    Config.builder(backupDir.toString()).logLevel(LogLevel.NONE).build())) {
+                assertEquals("v", read(restored, restored.getColumnFamily("cf"), "k"));
+            }
+        }
+
+        @Test
         void rejectsAnEmptyBackupDirectory() throws TidesDBException {
             try (TidesDB db = openWithCf("maint-backup-args", "cf")) {
                 assertThrows(IllegalArgumentException.class, () -> db.backup(null));
@@ -1485,7 +1674,30 @@ public class TidesDBTest {
                 assertTrue(stats.getGlobalSeq() > 0);
                 assertTrue(stats.getUserBytesWritten() > 0);
                 assertTrue(stats.getWalBytesWritten() > 0);
-                assertNotNull(stats.toString());
+                assertTrue(stats.getTxnCommits() >= 1, "the write above committed");
+                assertEquals(0, stats.getTxnConflicts());
+                assertTrue(stats.toString().contains("txnCommits="));
+            }
+        }
+
+        @Test
+        void countsCommitsAndConflicts() throws TidesDBException {
+            try (TidesDB db = openWithCf("stats-txn", "cf")) {
+                ColumnFamily cf = db.getColumnFamily("cf");
+                write(db, cf, "k", "v0");
+                long commitsBefore = db.getDbStats().getTxnCommits();
+
+                try (Transaction loser = db.beginTransaction(IsolationLevel.SNAPSHOT)) {
+                    loser.put(cf, b("k"), b("loser"));
+                    write(db, cf, "k", "winner");
+                    TidesDBException e = assertThrows(TidesDBException.class, loser::commit);
+                    assertEquals(TidesDBException.ERR_CONFLICT, e.getErrorCode());
+                }
+
+                DbStats stats = db.getDbStats();
+                assertEquals(commitsBefore + 1, stats.getTxnCommits(),
+                    "only the winning write committed");
+                assertEquals(1, stats.getTxnConflicts());
             }
         }
 

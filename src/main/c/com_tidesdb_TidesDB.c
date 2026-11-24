@@ -18,8 +18,10 @@
  */
 #include <jni.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <tidesdb/db.h>
 
 /* the largest Java array length. jsize is a signed 32-bit int, so this is INT32_MAX -- written out
@@ -29,7 +31,7 @@
 #endif
 
 /* the most encoding chains tidesdb_get_{klog,vlog}_encoding_stats will report */
-#define JNI_MAX_ENCODING_CHAINS 16
+#define JNI_MAX_ENCODING_CHAINS TDB_MAX_ENCODING_CHAINS
 
 /* ===== error reporting ===== */
 
@@ -433,7 +435,7 @@ static jobject buildDbStatsObject(JNIEnv *env, const tidesdb_db_stats_t *stats)
     if (cls == NULL) return NULL;
 
     jmethodID ctor = (*env)->GetMethodID(
-        env, cls, "<init>", "(IIIIJIJJIJJZJJJJJJJJJJJJJJJJJJJJJJJJJ)V");
+        env, cls, "<init>", "(IIIIJIJJIJJJJZJJJJJJJJJJJJJJJJJJJJJJJJJ)V");
     if (ctor == NULL)
     {
         (*env)->DeleteLocalRef(env, cls);
@@ -445,7 +447,8 @@ static jobject buildDbStatsObject(JNIEnv *env, const tidesdb_db_stats_t *stats)
         (jint)stats->compaction_pending_count, (jint)stats->total_sstable_count,
         (jlong)stats->total_data_size_bytes, (jint)stats->num_open_sstables,
         (jlong)stats->global_seq, (jlong)stats->min_snapshot_seq, (jint)stats->active_txn_count,
-        (jlong)stats->txn_memory_bytes, (jlong)stats->memtable_bytes,
+        (jlong)stats->txn_memory_bytes, (jlong)stats->txn_commits, (jlong)stats->txn_conflicts,
+        (jlong)stats->memtable_bytes,
         stats->is_flushing ? JNI_TRUE : JNI_FALSE, (jlong)stats->next_cf_index,
         (jlong)stats->wal_generation, (jlong)stats->flush_count, (jlong)stats->compaction_count,
         (jlong)stats->flush_bytes_written, (jlong)stats->compaction_bytes_written,
@@ -1813,6 +1816,37 @@ JNIEXPORT jbyteArray JNICALL Java_com_tidesdb_Transaction_nativeGetNoTrack(JNIEn
     return transactionRead(env, handle, cfHandle, key, 0);
 }
 
+/**
+ * Reads the expiry of the key visible to the transaction, pending writes included.
+ * Returns the absolute expiry in unix seconds, -1 for a key that never expires, and
+ * Long.MIN_VALUE when the key is missing, deleted or expired -- the Java side turns
+ * that sentinel into a null, the same way a get reports absence.
+ */
+JNIEXPORT jlong JNICALL Java_com_tidesdb_Transaction_nativeGetTtl(JNIEnv *env, jclass cls,
+                                                                  jlong handle, jlong cfHandle,
+                                                                  jbyteArray key)
+{
+    (void)cls;
+
+    jni_bytes_t k;
+    if (acquireBytes(env, key, &k) != 0) return (jlong)INT64_MIN;
+
+    time_t ttl = 0;
+    int result = tidesdb_txn_get_ttl((tidesdb_txn_t *)(uintptr_t)handle,
+                                     (tidesdb_column_family_t *)(uintptr_t)cfHandle,
+                                     (const uint8_t *)k.data, (size_t)k.length, &ttl);
+
+    releaseBytes(env, &k);
+
+    if (result == TDB_ERR_NOT_FOUND) return (jlong)INT64_MIN;
+    if (result != TDB_SUCCESS)
+    {
+        throwResult(env, result);
+        return (jlong)INT64_MIN;
+    }
+    return (jlong)ttl;
+}
+
 JNIEXPORT jboolean JNICALL Java_com_tidesdb_Transaction_nativeContains(JNIEnv *env, jclass cls,
                                                                         jlong handle,
                                                                         jlong cfHandle,
@@ -2267,6 +2301,21 @@ JNIEXPORT jbyteArray JNICALL Java_com_tidesdb_TidesDBIterator_nativeValue(JNIEnv
         return NULL;
     }
     return toByteArrayAndFree(env, value, valueSize);
+}
+
+JNIEXPORT jlong JNICALL Java_com_tidesdb_TidesDBIterator_nativeTtl(JNIEnv *env, jclass cls,
+                                                                   jlong handle)
+{
+    (void)cls;
+
+    time_t ttl = 0;
+    int result = tidesdb_iter_ttl((tidesdb_iter_t *)(uintptr_t)handle, &ttl);
+    if (result != TDB_SUCCESS)
+    {
+        throwResult(env, result);
+        return -1;
+    }
+    return (jlong)ttl;
 }
 
 JNIEXPORT jobject JNICALL Java_com_tidesdb_TidesDBIterator_nativeKeyValue(JNIEnv *env, jclass cls,

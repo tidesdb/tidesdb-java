@@ -571,7 +571,8 @@ public class PojoAndEnumTest {
                 TidesDBException.ERR_INVALID_DB, TidesDBException.ERR_UNKNOWN,
                 TidesDBException.ERR_LOCKED, TidesDBException.ERR_READONLY,
                 TidesDBException.ERR_TXN_EXPIRED, TidesDBException.ERR_NO_SPACE,
-                TidesDBException.ERR_TXN_ABORTED, TidesDBException.ERR_TOO_OLD};
+                TidesDBException.ERR_TXN_ABORTED, TidesDBException.ERR_TOO_OLD,
+                TidesDBException.ERR_ROOT_EXECUTION};
 
             for (int code : codes) {
                 String message = new TidesDBException("x", code).getErrorMessage();
@@ -608,6 +609,7 @@ public class PojoAndEnumTest {
             assertEquals(-15, TidesDBException.ERR_NO_SPACE);
             assertEquals(-16, TidesDBException.ERR_TXN_ABORTED);
             assertEquals(-17, TidesDBException.ERR_TOO_OLD);
+            assertEquals(-18, TidesDBException.ERR_ROOT_EXECUTION);
         }
     }
 
